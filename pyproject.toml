@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "polysentiment-trader"
+version = "0.1.0"
+description = "Polymarket paper trading demo bot powered by Adanos sentiment data"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Adanos" }]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/adanos-software/polysentiment-trader"
+Repository = "https://github.com/adanos-software/polysentiment-trader"
+Issues = "https://github.com/adanos-software/polysentiment-trader/issues"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0"]
+
+[project.scripts]
+polysentiment-trader = "polysentiment_trader.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["polysentiment_trader", "polysentiment_trader.*"]
