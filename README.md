@@ -41,10 +41,13 @@ Signals consumed by the strategy:
 - `trend`
 - `trade_count`
 - `sentiment_score`
+- `top_mentions[].condition_id`
+- `top_mentions[].end_date`
 - `top_mentions[].yes_price`
 - `top_mentions[].no_price`
 - `top_mentions[].liquidity`
 - `top_mentions[].trade_count`
+- optional CLOB token metadata such as `clob_token_ids`, `outcomes`, or token objects when available
 
 ## Quick Start
 
@@ -126,15 +129,29 @@ make demo SCAN_LIMIT=50 MIN_EDGE=0.005 MAX_STAKE=50
 For each trending ticker, the bot:
 
 1. Loads the ticker's detailed Polymarket market list.
-2. Rejects weak candidates with low buzz, low trade count, weak sentiment, falling flow, or low liquidity.
-3. Infers whether a market's YES outcome is bullish or bearish for the ticker.
-4. Chooses YES or NO based on Adanos directional sentiment.
-5. Estimates a simple model probability from sentiment, trend, buzz, liquidity, and market flow.
-6. Computes edge as `estimated_probability - current_price`.
-7. Sizes the position using fractional Kelly with hard caps.
-8. Saves the simulated position to the paper ledger.
+2. Normalizes market metadata and rejects stale, closed, malformed, or incomplete market payloads.
+3. Rejects weak candidates with low buzz, low trade count, weak sentiment, falling flow, or low liquidity.
+4. Infers whether a market's YES outcome is bullish or bearish for the ticker.
+5. Chooses YES or NO based on Adanos directional sentiment.
+6. Reads the selected side through a quote adapter instead of touching raw API fields directly.
+7. Estimates a simple model probability from sentiment, trend, buzz, liquidity, and market flow.
+8. Computes edge as `estimated_probability - current_price`.
+9. Sizes the position using fractional Kelly with hard caps.
+10. Saves the simulated position to the paper ledger.
 
 Open positions are refreshed on later runs. Positions close automatically in the paper ledger when they hit the configured stop-loss or take-profit threshold.
+
+## Data Quality
+
+The bot fails closed when market data is not usable. Candidate markets are skipped before strategy scoring when they are:
+
+- missing a `condition_id` or question
+- inactive, closed, archived, or past `end_date`
+- carrying invalid probability prices outside `0..1`
+- carrying invalid negative liquidity, volume, or trade counts
+- missing YES/NO CLOB token ids when token ids are explicitly required by future execution modes
+
+The current paper mode does not require CLOB token ids. It still parses them when the API provides `tokens`, `outcomes` plus `clob_token_ids`, or compatible camelCase variants. Future live/approval modes can enable strict token-id requirements without changing the scoring engine.
 
 ## Useful Options
 
@@ -143,6 +160,7 @@ polysentiment-trader --scan-limit 50
 polysentiment-trader --min-edge 0.005 --max-stake 50
 polysentiment-trader --bankroll 250 --max-stake 10
 polysentiment-trader --ledger data/demo-portfolio.json
+polysentiment-trader --require-clob-token-ids --no-write
 ```
 
 ## Development

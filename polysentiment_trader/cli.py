@@ -50,6 +50,7 @@ def run_once(args: argparse.Namespace) -> None:
         min_edge=args.min_edge,
         min_buzz_score=args.min_buzz_score,
         min_abs_sentiment=args.min_abs_sentiment,
+        require_clob_token_ids=args.require_clob_token_ids,
     )
     ledger_path = Path(args.ledger).expanduser()
     portfolio = load_portfolio(ledger_path, initial_bankroll=args.bankroll)
@@ -90,6 +91,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-edge", type=float, default=0.015)
     parser.add_argument("--min-buzz-score", type=float, default=40.0)
     parser.add_argument("--min-abs-sentiment", type=float, default=0.12)
+    parser.add_argument(
+        "--require-clob-token-ids",
+        action="store_true",
+        help="Skip markets without YES/NO CLOB token ids; useful for future execution adapters.",
+    )
     parser.add_argument("--timeout", type=float, default=20.0)
     parser.add_argument("--no-write", action="store_true")
     parser.add_argument("--loop", action="store_true", help="Run continuously")

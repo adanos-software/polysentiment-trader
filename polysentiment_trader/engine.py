@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Literal, Optional
 
+from polysentiment_trader.market_data import MarketResolver, NormalizedMarket, QuoteAdapter
+
 
 TradeSide = Literal["YES", "NO"]
 
@@ -129,6 +131,7 @@ class StrategyConfig:
     stop_loss_pct: float = -0.20
     take_profit_pct: float = 0.35
     allow_stable_trend: bool = True
+    require_clob_token_ids: bool = False
 
 
 @dataclass(frozen=True)
@@ -171,6 +174,9 @@ class MarketSignal:
     trade_count: int
     sentiment_score: Optional[float]
     active: bool
+    end_date: Optional[str] = None
+    yes_token_id: Optional[str] = None
+    no_token_id: Optional[str] = None
 
     @classmethod
     def from_api(cls, ticker: str, data: dict[str, Any]) -> "MarketSignal":
@@ -190,10 +196,35 @@ class MarketSignal:
                 else None
             ),
             active=bool(data.get("active", True)),
+            end_date=data.get("end_date") or data.get("endDate"),
+            yes_token_id=data.get("yes_token_id") or data.get("yesTokenId"),
+            no_token_id=data.get("no_token_id") or data.get("noTokenId"),
+        )
+
+    @classmethod
+    def from_normalized(cls, market: NormalizedMarket) -> "MarketSignal":
+        return cls(
+            ticker=market.ticker,
+            condition_id=market.condition_id,
+            question=market.question,
+            market_type=market.market_type,
+            yes_price=market.yes_price,
+            no_price=market.no_price,
+            liquidity=market.liquidity,
+            volume_24h=market.volume_24h,
+            trade_count=market.trade_count,
+            sentiment_score=market.sentiment_score,
+            active=market.active,
+            end_date=market.end_date.isoformat() if market.end_date else None,
+            yes_token_id=market.yes_token_id,
+            no_token_id=market.no_token_id,
         )
 
     def quote_for(self, side: TradeSide) -> Optional[float]:
         return self.yes_price if side == "YES" else self.no_price
+
+    def token_id_for(self, side: TradeSide) -> Optional[str]:
+        return self.yes_token_id if side == "YES" else self.no_token_id
 
 
 @dataclass
@@ -363,6 +394,8 @@ class PaperTrader:
 
     def __init__(self, config: Optional[StrategyConfig] = None) -> None:
         self.config = config or StrategyConfig()
+        self.market_resolver = MarketResolver()
+        self.quote_adapter = QuoteAdapter()
 
     def run(
         self,
@@ -373,9 +406,10 @@ class PaperTrader:
     ) -> RunResult:
         now = now or utc_now()
         stocks = [StockSignal.from_api(item) for item in trending]
-        details_by_ticker = self._details_by_ticker(details)
+        details_by_ticker, data_quality_rejections = self._details_with_rejections(details, now)
         exits = self.mark_to_market(portfolio, details_by_ticker, now)
         orders, rejections = self.build_orders(stocks, details_by_ticker, portfolio)
+        rejections = data_quality_rejections + rejections
         for order in orders:
             self.apply_order(portfolio, order, now)
         portfolio.updated_at = isoformat(now)
@@ -537,6 +571,16 @@ class PaperTrader:
         quote = market.quote_for(side)
         if quote is None:
             return None, Rejection(stock.ticker, market.condition_id, "missing_quote", side)
+        quote_result, quote_issue = self.quote_adapter.quote(
+            market,
+            side,
+            require_token_id=self.config.require_clob_token_ids,
+        )
+        if quote_issue is not None:
+            return None, Rejection(stock.ticker, market.condition_id, quote_issue.reason, quote_issue.detail)
+        if quote_result is None:
+            return None, Rejection(stock.ticker, market.condition_id, "missing_quote", side)
+        quote = quote_result.reference_price
         if quote < self.config.min_price or quote > self.config.max_price:
             return None, Rejection(stock.ticker, market.condition_id, "price_out_of_range", f"{quote:.3f}")
         if not market.active:
@@ -614,17 +658,38 @@ class PaperTrader:
 
     @staticmethod
     def _details_by_ticker(details: Iterable[dict[str, Any]]) -> dict[str, list[MarketSignal]]:
+        return PaperTrader()._details_with_rejections(details, utc_now())[0]
+
+    def _details_with_rejections(
+        self,
+        details: Iterable[dict[str, Any]],
+        now: datetime,
+    ) -> tuple[dict[str, list[MarketSignal]], list[Rejection]]:
         result: dict[str, list[MarketSignal]] = {}
+        rejections: list[Rejection] = []
         for detail in details:
             ticker = str(detail.get("ticker") or "").strip().upper()
             if not ticker:
                 continue
-            result[ticker] = [
-                MarketSignal.from_api(ticker, item)
-                for item in detail.get("top_mentions") or []
-                if isinstance(item, dict)
-            ]
-        return result
+            result[ticker] = []
+            for item in detail.get("top_mentions") or []:
+                if not isinstance(item, dict):
+                    rejections.append(
+                        Rejection(ticker, None, "invalid_market_payload", "top_mentions item is not an object")
+                    )
+                    continue
+                market, issue = self.market_resolver.resolve(
+                    ticker,
+                    item,
+                    now=now,
+                    require_token_ids=self.config.require_clob_token_ids,
+                )
+                if issue is not None:
+                    rejections.append(Rejection(issue.ticker, issue.condition_id, issue.reason, issue.detail))
+                    continue
+                if market is not None:
+                    result[ticker].append(MarketSignal.from_normalized(market))
+        return result, rejections
 
 
 def load_portfolio(path: Path, initial_bankroll: float) -> Portfolio:

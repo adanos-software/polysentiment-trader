@@ -26,8 +26,15 @@ def stock(ticker="AAPL", sentiment=0.6, buzz=80.0, trend="rising"):
     }
 
 
-def market(question="Will Apple (AAPL) close above $240 this week?", market_type="close_above", yes=0.45, no=0.55, sentiment=0.4):
-    return {
+def market(
+    question="Will Apple (AAPL) close above $240 this week?",
+    market_type="close_above",
+    yes=0.45,
+    no=0.55,
+    sentiment=0.4,
+    **overrides,
+):
+    data = {
         "condition_id": "c1",
         "question": question,
         "market_type": market_type,
@@ -39,6 +46,8 @@ def market(question="Will Apple (AAPL) close above $240 this week?", market_type
         "volume_24h": 5_000.0,
         "active": True,
     }
+    data.update(overrides)
+    return data
 
 
 def detail(ticker="AAPL", markets=None):
@@ -144,3 +153,33 @@ def test_report_includes_entries_and_skips():
     assert "POLYSENTIMENT TRADER" in report
     assert "AAPL   BUY YES" in report
     assert "weak_sentiment=1" in report
+
+
+def test_trader_skips_expired_markets_before_price_filter():
+    trader = PaperTrader(StrategyConfig(min_edge=0.001))
+    expired_market = market(yes=0.0005, no=0.9995, end_date="2026-04-18")
+
+    run = trader.run(
+        [stock()],
+        [detail(markets=[expired_market])],
+        Portfolio.new(1000.0),
+        now=datetime(2026, 4, 19, 12, 0, 0),
+    )
+
+    assert len(run.orders) == 0
+    assert run.rejection_counts()["market_closed"] == 1
+    assert "price_out_of_range" not in run.rejection_counts()
+
+
+def test_trader_can_require_clob_token_ids():
+    trader = PaperTrader(StrategyConfig(min_edge=0.001, require_clob_token_ids=True))
+
+    run = trader.run(
+        [stock()],
+        [detail()],
+        Portfolio.new(1000.0),
+        now=datetime(2026, 4, 19, 12, 0, 0),
+    )
+
+    assert len(run.orders) == 0
+    assert run.rejection_counts()["missing_token_id"] == 1
