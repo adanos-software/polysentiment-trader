@@ -7,6 +7,7 @@ __pycache__/
 venv/
 build/
 data/*.json
+data/*.csv
 data/*.pid
 data/*.logpath
 dist/
