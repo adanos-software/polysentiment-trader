@@ -3,6 +3,7 @@ import argparse
 import pytest
 
 from polysentiment_trader import cli
+from polysentiment_trader.client import AdanosApiError
 
 from tests.factories import detail, stock
 
@@ -51,3 +52,26 @@ def test_run_once_saves_ledger_before_transparency_export_failure(monkeypatch, t
         cli.run_once(args_for(tmp_path))
 
     assert (tmp_path / "paper-portfolio.json").exists()
+
+
+def test_loop_logs_failure_and_continues_to_next_cycle(tmp_path, capsys):
+    args = args_for(tmp_path)
+    args.loop = True
+    args.cycles = 2
+    args.interval_minutes = 0.1
+    calls = []
+
+    def run_cycle(_args):
+        calls.append("cycle")
+        if len(calls) == 1:
+            raise AdanosApiError("HTTP 503 from https://api.adanos.org/test")
+
+    sleeps = []
+
+    cli.run_loop(args, run_cycle=run_cycle, sleep=lambda seconds: sleeps.append(seconds))
+
+    captured = capsys.readouterr()
+    assert calls == ["cycle", "cycle"]
+    assert "Cycle 1 failed; skipping until next interval." in captured.out
+    assert "AdanosApiError" in captured.err
+    assert sleeps == [6.0]

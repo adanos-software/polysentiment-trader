@@ -101,6 +101,8 @@ Run three one-minute cycles for a quick smoke test:
 polysentiment-trader --loop --interval-minutes 1 --cycles 3
 ```
 
+In loop mode, a failed API cycle is logged and skipped; the next cycle continues after the configured interval. One-shot runs still fail fast so setup and API issues are visible.
+
 The default ledger path is:
 
 ```text

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import time
+import traceback
 from datetime import datetime
 from pathlib import Path
 
@@ -147,14 +148,22 @@ def main() -> None:
         run_once(args)
         return
 
+    run_loop(args)
+
+
+def run_loop(args: argparse.Namespace, run_cycle=run_once, sleep=time.sleep) -> None:
     cycles = 0
     while True:
         cycles += 1
         print(f"\nCycle {cycles}")
-        run_once(args)
+        try:
+            run_cycle(args)
+        except Exception:
+            print(f"\nCycle {cycles} failed; skipping until next interval.")
+            traceback.print_exc()
         if args.cycles and cycles >= args.cycles:
             return
-        time.sleep(max(args.interval_minutes, 0.1) * 60)
+        sleep(max(args.interval_minutes, 0.1) * 60)
 
 
 if __name__ == "__main__":
