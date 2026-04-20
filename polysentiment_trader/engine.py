@@ -375,11 +375,37 @@ class Rejection:
     detail: str
 
 
+@dataclass(frozen=True)
+class CandidateTrace:
+    ticker: str
+    condition_id: Optional[str]
+    question: Optional[str]
+    action: str
+    reason: str
+    detail: str
+    side: Optional[TradeSide] = None
+    quote: Optional[float] = None
+    estimated_probability: Optional[float] = None
+    edge: Optional[float] = None
+    stake: Optional[float] = None
+    buzz_score: Optional[float] = None
+    sentiment_score: Optional[float] = None
+    trend: Optional[str] = None
+    market_type: Optional[str] = None
+    liquidity: Optional[float] = None
+    volume_24h: Optional[float] = None
+    market_trade_count: Optional[int] = None
+    yes_price: Optional[float] = None
+    no_price: Optional[float] = None
+    end_date: Optional[str] = None
+
+
 @dataclass
 class RunResult:
     orders: list[Order]
     exits: list[Exit]
     rejections: list[Rejection]
+    considered_markets: list[CandidateTrace]
     portfolio: Portfolio
 
     def rejection_counts(self) -> dict[str, int]:
@@ -406,14 +432,21 @@ class PaperTrader:
     ) -> RunResult:
         now = now or utc_now()
         stocks = [StockSignal.from_api(item) for item in trending]
-        details_by_ticker, data_quality_rejections = self._details_with_rejections(details, now)
+        details_by_ticker, data_quality_rejections, data_quality_traces = self._details_with_rejections(details, now)
         exits = self.mark_to_market(portfolio, details_by_ticker, now)
-        orders, rejections = self.build_orders(stocks, details_by_ticker, portfolio)
+        orders, rejections, considered_markets = self.build_orders(stocks, details_by_ticker, portfolio)
         rejections = data_quality_rejections + rejections
+        considered_markets = data_quality_traces + considered_markets
         for order in orders:
             self.apply_order(portfolio, order, now)
         portfolio.updated_at = isoformat(now)
-        return RunResult(orders=orders, exits=exits, rejections=rejections, portfolio=portfolio)
+        return RunResult(
+            orders=orders,
+            exits=exits,
+            rejections=rejections,
+            considered_markets=considered_markets,
+            portfolio=portfolio,
+        )
 
     def mark_to_market(
         self,
@@ -475,24 +508,33 @@ class PaperTrader:
         stocks: Iterable[StockSignal],
         details_by_ticker: dict[str, list[MarketSignal]],
         portfolio: Portfolio,
-    ) -> tuple[list[Order], list[Rejection]]:
+    ) -> tuple[list[Order], list[Rejection], list[CandidateTrace]]:
         orders: list[Order] = []
         rejections: list[Rejection] = []
+        traces: list[CandidateTrace] = []
         open_keys = {position.key for position in portfolio.open_positions()}
         open_tickers = {position.ticker for position in portfolio.open_positions()}
         remaining_slots = max(0, self.config.max_positions - len(open_keys))
 
         for stock in sorted(stocks, key=lambda item: (-item.buzz_score, item.ticker)):
             if len(orders) >= remaining_slots:
-                break
+                rejection = Rejection(stock.ticker, None, "max_positions_reached", "no free portfolio slot")
+                rejections.append(rejection)
+                traces.extend(self._stock_or_market_traces(stock, details_by_ticker.get(stock.ticker, []), rejection))
+                continue
 
             stock_rejection = self._reject_stock(stock)
             if stock_rejection is not None:
                 rejections.append(stock_rejection)
+                traces.extend(
+                    self._stock_or_market_traces(stock, details_by_ticker.get(stock.ticker, []), stock_rejection)
+                )
                 continue
 
             if stock.ticker in open_tickers:
-                rejections.append(Rejection(stock.ticker, None, "already_open", "ticker already open"))
+                rejection = Rejection(stock.ticker, None, "already_open", "ticker already open")
+                rejections.append(rejection)
+                traces.extend(self._stock_or_market_traces(stock, details_by_ticker.get(stock.ticker, []), rejection))
                 continue
 
             markets = sorted(
@@ -500,20 +542,24 @@ class PaperTrader:
                 key=lambda market: (-market.trade_count, -market.volume_24h, -market.liquidity),
             )
             if not markets:
-                rejections.append(Rejection(stock.ticker, None, "missing_markets", "no top_mentions"))
+                rejection = Rejection(stock.ticker, None, "missing_markets", "no top_mentions")
+                rejections.append(rejection)
+                traces.append(self._stock_trace(stock, rejection))
                 continue
 
             for market in markets:
                 order, rejection = self._build_order(stock, market, portfolio, open_keys)
                 if order is not None:
                     orders.append(order)
+                    traces.append(self._order_trace(stock, market, order))
                     open_keys.add((order.condition_id, order.side))
                     open_tickers.add(order.ticker)
                     break
                 if rejection is not None:
                     rejections.append(rejection)
+                    traces.append(self._rejection_trace(stock, market, rejection))
 
-        return orders, rejections
+        return orders, rejections, traces
 
     def apply_order(self, portfolio: Portfolio, order: Order, now: datetime) -> Position:
         stake = min(order.stake, portfolio.cash)
@@ -664,9 +710,10 @@ class PaperTrader:
         self,
         details: Iterable[dict[str, Any]],
         now: datetime,
-    ) -> tuple[dict[str, list[MarketSignal]], list[Rejection]]:
+    ) -> tuple[dict[str, list[MarketSignal]], list[Rejection], list[CandidateTrace]]:
         result: dict[str, list[MarketSignal]] = {}
         rejections: list[Rejection] = []
+        traces: list[CandidateTrace] = []
         for detail in details:
             ticker = str(detail.get("ticker") or "").strip().upper()
             if not ticker:
@@ -677,6 +724,16 @@ class PaperTrader:
                     rejections.append(
                         Rejection(ticker, None, "invalid_market_payload", "top_mentions item is not an object")
                     )
+                    traces.append(
+                        CandidateTrace(
+                            ticker=ticker,
+                            condition_id=None,
+                            question=None,
+                            action="skipped",
+                            reason="invalid_market_payload",
+                            detail="top_mentions item is not an object",
+                        )
+                    )
                     continue
                 market, issue = self.market_resolver.resolve(
                     ticker,
@@ -686,10 +743,106 @@ class PaperTrader:
                 )
                 if issue is not None:
                     rejections.append(Rejection(issue.ticker, issue.condition_id, issue.reason, issue.detail))
+                    traces.append(
+                        CandidateTrace(
+                            ticker=issue.ticker,
+                            condition_id=issue.condition_id,
+                            question=str(item.get("question") or "").strip() or None,
+                            action="skipped",
+                            reason=issue.reason,
+                            detail=issue.detail,
+                            market_type=str(item.get("market_type") or "") or None,
+                            liquidity=as_float(item.get("liquidity")),
+                            volume_24h=as_float(item.get("volume_24h")),
+                            market_trade_count=as_int(item.get("trade_count")),
+                            yes_price=as_float(item.get("yes_price")) if item.get("yes_price") is not None else None,
+                            no_price=as_float(item.get("no_price")) if item.get("no_price") is not None else None,
+                            end_date=item.get("end_date") or item.get("endDate"),
+                        )
+                    )
                     continue
                 if market is not None:
                     result[ticker].append(MarketSignal.from_normalized(market))
-        return result, rejections
+        return result, rejections, traces
+
+    @staticmethod
+    def _stock_trace(stock: StockSignal, rejection: Rejection) -> CandidateTrace:
+        return CandidateTrace(
+            ticker=stock.ticker,
+            condition_id=rejection.condition_id,
+            question=None,
+            action="skipped",
+            reason=rejection.reason,
+            detail=rejection.detail,
+            buzz_score=stock.buzz_score,
+            sentiment_score=stock.sentiment_score,
+            trend=stock.trend,
+        )
+
+    @classmethod
+    def _stock_or_market_traces(
+        cls,
+        stock: StockSignal,
+        markets: list[MarketSignal],
+        rejection: Rejection,
+    ) -> list[CandidateTrace]:
+        if not markets:
+            return [cls._stock_trace(stock, rejection)]
+        return [
+            cls._rejection_trace(
+                stock,
+                market,
+                Rejection(stock.ticker, market.condition_id, rejection.reason, rejection.detail),
+            )
+            for market in markets
+        ]
+
+    @staticmethod
+    def _rejection_trace(stock: StockSignal, market: MarketSignal, rejection: Rejection) -> CandidateTrace:
+        return CandidateTrace(
+            ticker=stock.ticker,
+            condition_id=market.condition_id,
+            question=market.question,
+            action="skipped",
+            reason=rejection.reason,
+            detail=rejection.detail,
+            buzz_score=stock.buzz_score,
+            sentiment_score=stock.sentiment_score,
+            trend=stock.trend,
+            market_type=market.market_type,
+            liquidity=market.liquidity,
+            volume_24h=market.volume_24h,
+            market_trade_count=market.trade_count,
+            yes_price=market.yes_price,
+            no_price=market.no_price,
+            end_date=market.end_date,
+        )
+
+    @staticmethod
+    def _order_trace(stock: StockSignal, market: MarketSignal, order: Order) -> CandidateTrace:
+        return CandidateTrace(
+            ticker=stock.ticker,
+            condition_id=market.condition_id,
+            question=market.question,
+            action="opened",
+            reason="passed",
+            detail=order.thesis,
+            side=order.side,
+            quote=order.price,
+            estimated_probability=order.estimated_probability,
+            edge=order.edge,
+            stake=order.stake,
+            buzz_score=stock.buzz_score,
+            sentiment_score=stock.sentiment_score,
+            trend=stock.trend,
+            market_type=market.market_type,
+            liquidity=market.liquidity,
+            volume_24h=market.volume_24h,
+            market_trade_count=market.trade_count,
+            yes_price=market.yes_price,
+            no_price=market.no_price,
+            end_date=market.end_date,
+        )
 
 
 def load_portfolio(path: Path, initial_bankroll: float) -> Portfolio:
@@ -716,6 +869,7 @@ def format_report(run: RunResult) -> str:
         "POLYSENTIMENT TRADER",
         "=" * 72,
         f"Equity ${portfolio.equity():.2f} | Cash ${portfolio.cash:.2f} | Open {len(portfolio.open_positions())} | Exposure ${portfolio.exposure():.2f}",
+        f"Considered {len(run.considered_markets)} candidates | Entries {len(run.orders)} | Exits {len(run.exits)}",
     ]
 
     if run.exits:

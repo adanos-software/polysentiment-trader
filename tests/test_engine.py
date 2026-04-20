@@ -12,46 +12,7 @@ from polysentiment_trader.engine import (
     load_portfolio,
     save_portfolio,
 )
-
-
-def stock(ticker="AAPL", sentiment=0.6, buzz=80.0, trend="rising"):
-    return {
-        "ticker": ticker,
-        "company_name": "Apple Inc.",
-        "buzz_score": buzz,
-        "trend": trend,
-        "trade_count": 80,
-        "sentiment_score": sentiment,
-        "total_liquidity": 150_000.0,
-    }
-
-
-def market(
-    question="Will Apple (AAPL) close above $240 this week?",
-    market_type="close_above",
-    yes=0.45,
-    no=0.55,
-    sentiment=0.4,
-    **overrides,
-):
-    data = {
-        "condition_id": "c1",
-        "question": question,
-        "market_type": market_type,
-        "trade_count": 12,
-        "sentiment_score": sentiment,
-        "yes_price": yes,
-        "no_price": no,
-        "liquidity": 20_000.0,
-        "volume_24h": 5_000.0,
-        "active": True,
-    }
-    data.update(overrides)
-    return data
-
-
-def detail(ticker="AAPL", markets=None):
-    return {"ticker": ticker, "found": True, "top_mentions": markets if markets is not None else [market()]}
+from tests.factories import detail, market, stock
 
 
 def test_derive_yes_direction_handles_common_market_shapes():
@@ -153,6 +114,44 @@ def test_report_includes_entries_and_skips():
     assert "POLYSENTIMENT TRADER" in report
     assert "AAPL   BUY YES" in report
     assert "weak_sentiment=1" in report
+    assert any(trace.action == "opened" for trace in run.considered_markets)
+    assert any(trace.reason == "weak_sentiment" for trace in run.considered_markets)
+
+
+def test_trader_traces_markets_skipped_by_position_capacity():
+    trader = PaperTrader(StrategyConfig(max_positions=1, min_edge=0.001))
+    portfolio = Portfolio(
+        initial_bankroll=100.0,
+        cash=75.0,
+        positions=[
+            Position(
+                ticker="AAPL",
+                condition_id="open-aapl",
+                question="Will Apple (AAPL) close above $240 this week?",
+                side="YES",
+                shares=55.0,
+                entry_price=0.45,
+                current_price=0.45,
+                stake=25.0,
+                opened_at="2026-04-19T10:00:00",
+                thesis="existing position",
+                confidence=0.8,
+                edge=0.1,
+            )
+        ],
+    )
+
+    run = trader.run(
+        [stock(ticker="MSFT")],
+        [detail(ticker="MSFT", markets=[market(condition_id="msft-market")])],
+        portfolio,
+        now=datetime(2026, 4, 19, 12, 0, 0),
+    )
+
+    assert len(run.orders) == 0
+    assert run.rejection_counts()["max_positions_reached"] == 1
+    assert run.considered_markets[0].condition_id == "msft-market"
+    assert run.considered_markets[0].reason == "max_positions_reached"
 
 
 def test_trader_skips_expired_markets_before_price_filter():
@@ -169,6 +168,8 @@ def test_trader_skips_expired_markets_before_price_filter():
     assert len(run.orders) == 0
     assert run.rejection_counts()["market_closed"] == 1
     assert "price_out_of_range" not in run.rejection_counts()
+    assert run.considered_markets[0].reason == "market_closed"
+    assert run.considered_markets[0].yes_price == pytest.approx(0.0005)
 
 
 def test_trader_can_require_clob_token_ids():

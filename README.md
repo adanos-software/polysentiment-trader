@@ -11,6 +11,7 @@ PolySentimentTrader turns prediction-market sentiment signals into simulated YES
 - Converts Adanos sentiment, buzz, flow, liquidity, and prices into trade candidates.
 - Simulates YES/NO entries in a local JSON paper ledger.
 - Marks open positions to the latest API prices on each run.
+- Writes public-safe transparency exports for the latest run.
 - Applies conservative risk rules: max positions, max stake, stop-loss, take-profit, and minimum edge.
 - Supports one-shot runs and scheduled loops.
 
@@ -106,6 +107,15 @@ The default ledger path is:
 data/paper-portfolio.json
 ```
 
+The latest run also writes two local transparency files:
+
+```text
+data/latest-actions.json
+data/considered-markets-latest.csv
+```
+
+These files are ignored by git. They contain no API key, wallet secret, or private Polymarket credential.
+
 ## Make Commands
 
 ```bash
@@ -141,6 +151,16 @@ For each trending ticker, the bot:
 
 Open positions are refreshed on later runs. Positions close automatically in the paper ledger when they hit the configured stop-loss or take-profit threshold.
 
+## Transparency Exports
+
+Every run emits a public-safe snapshot for demos and debugging:
+
+- `data/latest-actions.json` gives the latest portfolio summary, strategy thresholds, new entries, exits, open positions, closed positions, skip counts, and the detailed candidate trace.
+- `data/considered-markets-latest.csv` gives one row per traced candidate market with ticker, condition id, question, action, skip reason, quote, model probability, edge, liquidity, flow, prices, and end date.
+
+The trace records both successful entries and rejected candidates. It also explains stock-level skips such as weak sentiment, already-open positions, or full portfolio capacity against the available market rows when market metadata exists.
+In the JSON, `skipped_counts` counts strategy decisions, while `candidate_reason_counts` counts rows in the detailed trace.
+
 ## Data Quality
 
 The bot fails closed when market data is not usable. Candidate markets are skipped before strategy scoring when they are:
@@ -160,8 +180,13 @@ polysentiment-trader --scan-limit 50
 polysentiment-trader --min-edge 0.005 --max-stake 50
 polysentiment-trader --bankroll 250 --max-stake 10
 polysentiment-trader --ledger data/demo-portfolio.json
+polysentiment-trader --actions-out data/demo-actions.json
+polysentiment-trader --markets-out data/demo-markets.csv
+polysentiment-trader --actions-out none --markets-out none
 polysentiment-trader --require-clob-token-ids --no-write
 ```
+
+The export paths can also be configured with `POLYSENTIMENT_ACTIONS_OUT` and `POLYSENTIMENT_MARKETS_OUT`.
 
 ## Development
 
@@ -178,7 +203,6 @@ python -m polysentiment_trader.cli --no-write
 
 ## Roadmap
 
-- Action recommendation export, e.g. `data/latest-actions.json`.
 - Manual approval mode for proposed trades.
 - Execution adapter interface for future live trading.
 - Optional Polymarket CLOB adapter behind explicit live-trading flags.

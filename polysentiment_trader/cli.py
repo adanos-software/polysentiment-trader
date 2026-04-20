@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import time
+from datetime import datetime
 from pathlib import Path
 
 from polysentiment_trader.client import AdanosClient
@@ -15,10 +16,13 @@ from polysentiment_trader.engine import (
     load_portfolio,
     save_portfolio,
 )
+from polysentiment_trader.transparency import write_transparency_exports
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_LEDGER = PROJECT_ROOT / "data" / "paper-portfolio.json"
+DEFAULT_ACTIONS = PROJECT_ROOT / "data" / "latest-actions.json"
+DEFAULT_MARKETS = PROJECT_ROOT / "data" / "considered-markets-latest.csv"
 DEFAULT_BASE_URL = "https://api.adanos.org"
 
 
@@ -53,6 +57,8 @@ def run_once(args: argparse.Namespace) -> None:
         require_clob_token_ids=args.require_clob_token_ids,
     )
     ledger_path = Path(args.ledger).expanduser()
+    actions_path = optional_path(args.actions_out)
+    markets_path = optional_path(args.markets_out)
     portfolio = load_portfolio(ledger_path, initial_bankroll=args.bankroll)
 
     trending = client.get_polymarket_trending(days=args.days, limit=args.scan_limit)
@@ -74,6 +80,30 @@ def run_once(args: argparse.Namespace) -> None:
         save_portfolio(ledger_path, portfolio)
         print(f"\nLedger: {ledger_path}")
 
+    write_transparency_exports(
+        actions_path=actions_path,
+        markets_path=markets_path,
+        run=run,
+        generated_at=datetime.fromisoformat(run.portfolio.updated_at),
+        base_url=args.base_url,
+        mode="paper",
+        config=config,
+        scan_limit=args.scan_limit,
+        days=args.days,
+        dry_run=args.no_write,
+    )
+
+    if actions_path is not None:
+        print(f"Actions: {actions_path}")
+    if markets_path is not None:
+        print(f"Markets: {markets_path}")
+
+
+def optional_path(raw_path: str) -> Path | None:
+    if raw_path.strip().lower() in {"", "none", "off", "false", "0"}:
+        return None
+    return Path(raw_path).expanduser()
+
 
 def build_parser() -> argparse.ArgumentParser:
     load_dotenv()
@@ -83,6 +113,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--base-url", default=os.getenv("ADANOS_BASE_URL", DEFAULT_BASE_URL))
     parser.add_argument("--api-key", default=os.getenv("ADANOS_API_KEY"))
     parser.add_argument("--ledger", default=str(DEFAULT_LEDGER))
+    parser.add_argument("--actions-out", default=os.getenv("POLYSENTIMENT_ACTIONS_OUT", str(DEFAULT_ACTIONS)))
+    parser.add_argument("--markets-out", default=os.getenv("POLYSENTIMENT_MARKETS_OUT", str(DEFAULT_MARKETS)))
     parser.add_argument("--bankroll", type=float, default=1000.0)
     parser.add_argument("--days", type=int, default=1)
     parser.add_argument("--scan-limit", type=int, default=25)
