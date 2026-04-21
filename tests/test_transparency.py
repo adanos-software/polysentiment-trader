@@ -29,12 +29,17 @@ def test_actions_payload_includes_orders_skips_and_portfolio():
     )
 
     assert payload["portfolio"]["cash"] == 975.0
+    assert payload["decision_explainer"]["summary"]
     assert payload["actions"][0]["ticker"] == "AAPL"
     assert payload["actions"][0]["action"] == "open_position"
+    assert payload["actions"][0]["evidence_quality_score"] >= config.min_evidence_quality_score
+    assert payload["actions"][0]["counter_case"]
     assert payload["skipped_counts"]["weak_sentiment"] == 1
     assert payload["candidate_action_counts"]["opened"] == 1
     assert payload["candidate_reason_counts"]["weak_sentiment"] == 1
     assert payload["considered_markets_count"] >= 2
+    assert payload["considered_markets"][0]["evidence_quality_score"] is not None
+    assert "counter_case" in payload["considered_markets"][0]
     assert "api_key" not in str(payload).lower()
 
 
@@ -69,6 +74,8 @@ def test_transparency_exports_write_json_and_csv(tmp_path):
     rows = list(csv.DictReader(markets_path.open(encoding="utf-8")))
     assert rows[0]["ticker"] == "AAPL"
     assert rows[0]["condition_id"] == "c1"
+    assert "evidence_quality_score" in rows[0]
+    assert "counter_case" in rows[0]
 
 
 def test_transparency_exports_can_be_disabled(tmp_path):

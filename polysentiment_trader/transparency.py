@@ -54,6 +54,7 @@ def build_actions_payload(
             "scan_limit": scan_limit,
         },
         "strategy": strategy_payload(config),
+        "decision_explainer": decision_explainer_payload(run.decision_explainer),
         "portfolio": portfolio_payload(run.portfolio),
         "actions": [order_payload(order) for order in run.orders],
         "exits": [exit_payload(exit_) for exit_ in run.exits],
@@ -97,7 +98,7 @@ def write_transparency_exports(
     if actions_path is not None:
         atomic_write_json(actions_path, payload)
     if markets_path is not None:
-        rows = [trace_payload(trace) for trace in run.considered_markets]
+        rows = [csv_trace_payload(trace) for trace in run.considered_markets]
         atomic_write_csv(markets_path, rows, market_trace_fieldnames())
 
 
@@ -125,6 +126,7 @@ def strategy_payload(config: StrategyConfig) -> dict[str, Any]:
         "min_liquidity": config.min_liquidity,
         "min_abs_sentiment": config.min_abs_sentiment,
         "min_edge": config.min_edge,
+        "min_evidence_quality_score": config.min_evidence_quality_score,
         "min_price": config.min_price,
         "max_price": config.max_price,
         "kelly_fraction": config.kelly_fraction,
@@ -165,7 +167,9 @@ def order_payload(order: Order) -> dict[str, Any]:
         "estimated_probability": round(order.estimated_probability, 4),
         "edge": round(order.edge, 4),
         "confidence": round(order.confidence, 4),
+        "evidence_quality_score": round(order.evidence_quality_score, 4),
         "reason": order.thesis,
+        "counter_case": list(order.counter_case),
     }
 
 
@@ -193,7 +197,17 @@ def position_payload(position: Position) -> dict[str, Any]:
 
 def trace_payload(trace: CandidateTrace) -> dict[str, Any]:
     payload = asdict(trace)
-    for key in ("quote", "estimated_probability", "edge", "buzz_score", "sentiment_score", "liquidity", "volume_24h"):
+    for key in (
+        "quote",
+        "estimated_probability",
+        "edge",
+        "confidence",
+        "evidence_quality_score",
+        "buzz_score",
+        "sentiment_score",
+        "liquidity",
+        "volume_24h",
+    ):
         if payload.get(key) is not None:
             payload[key] = round(float(payload[key]), 4)
     if payload.get("stake") is not None:
@@ -203,6 +217,20 @@ def trace_payload(trace: CandidateTrace) -> dict[str, Any]:
     if payload.get("no_price") is not None:
         payload["no_price"] = round(float(payload["no_price"]), 4)
     return payload
+
+
+def csv_trace_payload(trace: CandidateTrace) -> dict[str, Any]:
+    payload = trace_payload(trace)
+    payload["counter_case"] = " | ".join(payload.get("counter_case") or [])
+    return payload
+
+
+def decision_explainer_payload(explainer: Any) -> dict[str, Any]:
+    return {
+        "posture": explainer.posture,
+        "summary": explainer.summary,
+        "rationale": list(explainer.rationale),
+    }
 
 
 def trace_counts(traces: list[CandidateTrace], field: str) -> dict[str, int]:
@@ -227,7 +255,10 @@ def market_trace_fieldnames() -> list[str]:
         "quote",
         "estimated_probability",
         "edge",
+        "confidence",
+        "evidence_quality_score",
         "stake",
+        "counter_case",
         "buzz_score",
         "sentiment_score",
         "trend",

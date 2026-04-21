@@ -125,6 +125,7 @@ class StrategyConfig:
     min_liquidity: float = 1000.0
     min_abs_sentiment: float = 0.12
     min_edge: float = 0.015
+    min_evidence_quality_score: float = 0.45
     min_price: float = 0.05
     max_price: float = 0.85
     kelly_fraction: float = 0.25
@@ -241,6 +242,8 @@ class Position:
     thesis: str
     confidence: float
     edge: float
+    evidence_quality_score: float = 0.0
+    counter_case: tuple[str, ...] = ()
     status: str = "open"
     closed_at: Optional[str] = None
     exit_reason: Optional[str] = None
@@ -282,6 +285,8 @@ class Position:
             "thesis": self.thesis,
             "confidence": round(self.confidence, 4),
             "edge": round(self.edge, 4),
+            "evidence_quality_score": round(self.evidence_quality_score, 4),
+            "counter_case": list(self.counter_case),
             "status": self.status,
             "closed_at": self.closed_at,
             "exit_reason": self.exit_reason,
@@ -352,6 +357,8 @@ class Order:
     edge: float
     confidence: float
     thesis: str
+    evidence_quality_score: float
+    counter_case: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -387,7 +394,10 @@ class CandidateTrace:
     quote: Optional[float] = None
     estimated_probability: Optional[float] = None
     edge: Optional[float] = None
+    confidence: Optional[float] = None
+    evidence_quality_score: Optional[float] = None
     stake: Optional[float] = None
+    counter_case: tuple[str, ...] = ()
     buzz_score: Optional[float] = None
     sentiment_score: Optional[float] = None
     trend: Optional[str] = None
@@ -407,6 +417,7 @@ class RunResult:
     rejections: list[Rejection]
     considered_markets: list[CandidateTrace]
     portfolio: Portfolio
+    decision_explainer: "DecisionExplainer"
 
     def rejection_counts(self) -> dict[str, int]:
         counts: dict[str, int] = {}
@@ -446,6 +457,12 @@ class PaperTrader:
             rejections=rejections,
             considered_markets=considered_markets,
             portfolio=portfolio,
+            decision_explainer=build_decision_explainer(
+                orders=orders,
+                exits=exits,
+                rejections=rejections,
+                portfolio=portfolio,
+            ),
         )
 
     def mark_to_market(
@@ -576,6 +593,8 @@ class PaperTrader:
             thesis=order.thesis,
             confidence=order.confidence,
             edge=order.edge,
+            evidence_quality_score=order.evidence_quality_score,
+            counter_case=order.counter_case,
         )
         portfolio.cash -= stake
         portfolio.positions.append(position)
@@ -638,6 +657,14 @@ class PaperTrader:
 
         probability = self._estimate_probability(stock, market, desired_direction)
         edge = probability - quote
+        evidence_quality_score = self._evidence_quality_score(stock, market)
+        if evidence_quality_score < self.config.min_evidence_quality_score:
+            return None, Rejection(
+                stock.ticker,
+                market.condition_id,
+                "low_evidence_quality",
+                f"evidence={evidence_quality_score:.3f}",
+            )
         if edge < self.config.min_edge:
             return None, Rejection(stock.ticker, market.condition_id, "low_edge", f"{edge:.3f}")
 
@@ -645,11 +672,19 @@ class PaperTrader:
         if stake < self.config.min_stake:
             return None, Rejection(stock.ticker, market.condition_id, "stake_too_small", f"{stake:.2f}")
 
-        confidence = self._confidence(stock, market, edge)
+        counter_case = self._counter_case(
+            stock=stock,
+            market=market,
+            side=side,
+            quote=quote,
+            evidence_quality_score=evidence_quality_score,
+        )
+        confidence = self._confidence(stock, market, edge, evidence_quality_score)
         thesis = (
             f"{stock.ticker} {stock.trend or 'unknown'} flow, "
             f"buzz {stock.buzz_score:.1f}, sentiment {stock.sentiment_score:+.3f}; "
-            f"paper {side} at {quote:.3f}, model p={probability:.3f}, edge={edge:.3f}"
+            f"paper {side} at {quote:.3f}, model p={probability:.3f}, edge={edge:.3f}, "
+            f"evidence={evidence_quality_score:.3f}"
         )
         return (
             Order(
@@ -664,6 +699,8 @@ class PaperTrader:
                 edge=edge,
                 confidence=confidence,
                 thesis=thesis,
+                evidence_quality_score=evidence_quality_score,
+                counter_case=counter_case,
             ),
             None,
         )
@@ -688,14 +725,88 @@ class PaperTrader:
         risk_budget = min(self.config.max_stake, bankroll * self.config.max_position_pct, portfolio.cash)
         return round(min(bankroll * max(0.0, kelly) * self.config.kelly_fraction, risk_budget), 2)
 
-    def _confidence(self, stock: StockSignal, market: MarketSignal, edge: float) -> float:
+    def _evidence_quality_score(self, stock: StockSignal, market: MarketSignal) -> float:
+        stock_sentiment = clamp(abs(stock.sentiment_score or 0.0), 0.0, 1.0)
+        buzz = clamp(stock.buzz_score / 100.0, 0.0, 1.0)
+        stock_flow = clamp(stock.trade_count / 100.0, 0.0, 1.0)
+        market_flow = clamp(market.trade_count / 25.0, 0.0, 1.0)
+        liquidity = clamp(market.liquidity / 50_000.0, 0.0, 1.0)
+        trend = {"rising": 1.0, "stable": 0.65, "falling": 0.2}.get(stock.trend or "", 0.5)
+        alignment = 0.5
+        if market.sentiment_score is not None and stock.sentiment_score is not None:
+            stock_sign = 1 if stock.sentiment_score > 0 else -1
+            market_sign = 1 if market.sentiment_score > 0 else -1
+            market_strength = clamp(abs(market.sentiment_score), 0.0, 1.0)
+            alignment = 0.4 + (0.6 * market_strength if stock_sign == market_sign else 0.2 * (1.0 - market_strength))
+            alignment = clamp(alignment, 0.0, 1.0)
+
+        return round(
+            clamp(
+                (stock_sentiment * 0.18)
+                + (buzz * 0.16)
+                + (stock_flow * 0.14)
+                + (market_flow * 0.16)
+                + (liquidity * 0.18)
+                + (alignment * 0.12)
+                + (trend * 0.06),
+                0.0,
+                1.0,
+            ),
+            3,
+        )
+
+    def _counter_case(
+        self,
+        *,
+        stock: StockSignal,
+        market: MarketSignal,
+        side: TradeSide,
+        quote: float,
+        evidence_quality_score: float,
+    ) -> tuple[str, ...]:
+        notes: list[str] = []
+        if abs(stock.sentiment_score or 0.0) < 0.25:
+            notes.append("Ticker sentiment is only moderately directional.")
+        if market.sentiment_score is None:
+            notes.append("Market-level sentiment confirmation is missing.")
+        elif stock.sentiment_score is not None and (stock.sentiment_score * market.sentiment_score) <= 0:
+            notes.append("Market-level sentiment does not confirm the stock signal.")
+        elif abs(market.sentiment_score) < 0.25:
+            notes.append("Market-level sentiment confirmation is weak.")
+        if market.trade_count < max(self.config.min_market_trade_count * 10, 10):
+            notes.append("Contract trade flow is still fairly thin.")
+        if market.liquidity < max(self.config.min_liquidity * 5, 10_000.0):
+            notes.append("Liquidity is modest, so pricing can move noisily.")
+        if quote >= 0.65:
+            notes.append("Entry price is already crowded and leaves less upside.")
+        elif quote <= 0.12:
+            notes.append("Cheap contracts can stay cheap even when the thesis is right.")
+        if stock.trend != "rising":
+            notes.append("Social flow is not clearly rising, so follow-through may fade.")
+        if evidence_quality_score < 0.60:
+            notes.append("Evidence quality is only medium, so conviction should stay modest.")
+        if market.market_type == "other":
+            notes.append("Question wording may not map cleanly to the sentiment signal.")
+        if not notes:
+            notes.append("Polymarket pricing can move faster than sentiment data refreshes.")
+            notes.append(f"{side} relies on the market framing staying directionally aligned.")
+        return tuple(notes[:3])
+
+    def _confidence(
+        self,
+        stock: StockSignal,
+        market: MarketSignal,
+        edge: float,
+        evidence_quality_score: float,
+    ) -> float:
         return round(
             clamp(
                 (min(abs(stock.sentiment_score or 0.0), 1.0) * 0.25)
                 + (clamp(stock.buzz_score / 100.0, 0.0, 1.0) * 0.25)
-                + (clamp(market.liquidity / 50_000.0, 0.0, 1.0) * 0.20)
-                + (clamp(market.trade_count / 100.0, 0.0, 1.0) * 0.15)
-                + (clamp(edge / 0.10, 0.0, 1.0) * 0.15),
+                + (clamp(market.liquidity / 50_000.0, 0.0, 1.0) * 0.15)
+                + (clamp(market.trade_count / 100.0, 0.0, 1.0) * 0.10)
+                + (clamp(edge / 0.10, 0.0, 1.0) * 0.10)
+                + (evidence_quality_score * 0.15),
                 0.0,
                 1.0,
             ),
@@ -779,17 +890,16 @@ class PaperTrader:
             trend=stock.trend,
         )
 
-    @classmethod
     def _stock_or_market_traces(
-        cls,
+        self,
         stock: StockSignal,
         markets: list[MarketSignal],
         rejection: Rejection,
     ) -> list[CandidateTrace]:
         if not markets:
-            return [cls._stock_trace(stock, rejection)]
+            return [self._stock_trace(stock, rejection)]
         return [
-            cls._rejection_trace(
+            self._rejection_trace(
                 stock,
                 market,
                 Rejection(stock.ticker, market.condition_id, rejection.reason, rejection.detail),
@@ -797,8 +907,15 @@ class PaperTrader:
             for market in markets
         ]
 
-    @staticmethod
-    def _rejection_trace(stock: StockSignal, market: MarketSignal, rejection: Rejection) -> CandidateTrace:
+    def _rejection_trace(self, stock: StockSignal, market: MarketSignal, rejection: Rejection) -> CandidateTrace:
+        desired_direction = 1 if (stock.sentiment_score or 0.0) > 0 else -1
+        yes_direction = derive_yes_direction(market.market_type, market.question, stock.ticker)
+        if yes_direction is None:
+            side: TradeSide = "YES" if desired_direction > 0 else "NO"
+        else:
+            side = "YES" if yes_direction == desired_direction else "NO"
+        quote = market.quote_for(side) or market.quote_for("YES") or market.quote_for("NO") or 0.0
+        evidence_quality_score = self._evidence_quality_score(stock, market)
         return CandidateTrace(
             ticker=stock.ticker,
             condition_id=market.condition_id,
@@ -806,6 +923,16 @@ class PaperTrader:
             action="skipped",
             reason=rejection.reason,
             detail=rejection.detail,
+            side=side,
+            quote=quote if quote > 0.0 else None,
+            evidence_quality_score=evidence_quality_score,
+            counter_case=self._counter_case(
+                stock=stock,
+                market=market,
+                side=side,
+                quote=quote,
+                evidence_quality_score=evidence_quality_score,
+            ),
             buzz_score=stock.buzz_score,
             sentiment_score=stock.sentiment_score,
             trend=stock.trend,
@@ -831,7 +958,10 @@ class PaperTrader:
             quote=order.price,
             estimated_probability=order.estimated_probability,
             edge=order.edge,
+            confidence=order.confidence,
+            evidence_quality_score=order.evidence_quality_score,
             stake=order.stake,
+            counter_case=order.counter_case,
             buzz_score=stock.buzz_score,
             sentiment_score=stock.sentiment_score,
             trend=stock.trend,
@@ -860,6 +990,75 @@ def save_portfolio(path: Path, portfolio: Portfolio) -> None:
     with path.open("w", encoding="utf-8") as handle:
         json.dump(portfolio.to_dict(), handle, indent=2, sort_keys=True)
         handle.write("\n")
+
+
+@dataclass(frozen=True)
+class DecisionExplainer:
+    posture: str
+    summary: str
+    rationale: tuple[str, ...] = ()
+
+
+def build_decision_explainer(
+    *,
+    orders: list[Order],
+    exits: list[Exit],
+    rejections: list[Rejection],
+    portfolio: Portfolio,
+) -> DecisionExplainer:
+    counts: dict[str, int] = {}
+    for rejection in rejections:
+        counts[rejection.reason] = counts.get(rejection.reason, 0) + 1
+    top_blockers = [
+        f"{reason}={count}"
+        for reason, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:3]
+    ]
+
+    if orders and exits:
+        posture = "rebalance"
+        summary = f"Opened {len(orders)} new trade(s) and closed {len(exits)} position(s) this cycle."
+    elif orders:
+        posture = "adding_risk"
+        summary = f"Opened {len(orders)} new trade(s) after edge and evidence cleared the thresholds."
+    elif exits:
+        posture = "de_risking"
+        summary = f"Closed {len(exits)} position(s) and kept cash elevated at ${portfolio.cash:.2f}."
+    else:
+        posture = "hold"
+        blocker_text = ", ".join(top_blockers) if top_blockers else "no qualifying setups"
+        summary = f"No new trades; strongest blockers were {blocker_text}."
+
+    rationale: list[str] = [
+        f"Portfolio now holds {len(portfolio.open_positions())} open position(s) with ${portfolio.cash:.2f} cash and ${portfolio.exposure():.2f} exposure."
+    ]
+    if orders:
+        rationale.append(
+            "Entries cleared thresholds: "
+            + ", ".join(
+                f"{order.ticker} {order.side} edge {order.edge:.3f}, evidence {order.evidence_quality_score:.2f}"
+                for order in orders[:3]
+            )
+            + "."
+        )
+    if exits:
+        rationale.append(
+            "Exits: "
+            + ", ".join(
+                f"{exit_.ticker} {exit_.side} {exit_.reason} {exit_.return_pct:+.1%}"
+                for exit_ in exits[:3]
+            )
+            + "."
+        )
+    if top_blockers:
+        rationale.append("Top blockers: " + ", ".join(top_blockers) + ".")
+    open_positions = portfolio.open_positions()
+    if open_positions:
+        best = max(open_positions, key=lambda position: position.return_pct)
+        worst = min(open_positions, key=lambda position: position.return_pct)
+        rationale.append(
+            f"Open-book range: best {best.ticker} {best.return_pct:+.1%}, worst {worst.ticker} {worst.return_pct:+.1%}."
+        )
+    return DecisionExplainer(posture=posture, summary=summary, rationale=tuple(rationale[:4]))
 
 
 def format_report(run: RunResult) -> str:
@@ -899,5 +1098,10 @@ def format_report(run: RunResult) -> str:
         top_counts = ", ".join(f"{reason}={count}" for reason, count in list(counts.items())[:8])
         lines.append("\nSkipped")
         lines.append(f"  {top_counts}")
+
+    lines.append("\nDecision")
+    lines.append(f"  {run.decision_explainer.summary}")
+    for rationale in run.decision_explainer.rationale[:3]:
+        lines.append(f"  {rationale}")
 
     return "\n".join(lines)

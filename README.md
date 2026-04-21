@@ -147,9 +147,11 @@ For each trending ticker, the bot:
 5. Chooses YES or NO based on Adanos directional sentiment.
 6. Reads the selected side through a quote adapter instead of touching raw API fields directly.
 7. Estimates a simple model probability from sentiment, trend, buzz, liquidity, and market flow.
-8. Computes edge as `estimated_probability - current_price`.
-9. Sizes the position using fractional Kelly with hard caps.
-10. Saves the simulated position to the paper ledger.
+8. Scores evidence quality from sentiment strength, buzz, flow, liquidity, and market-level confirmation.
+9. Generates a short counter-case for every entry candidate so the trade has an explicit bear thesis.
+10. Computes edge as `estimated_probability - current_price`.
+11. Sizes the position using fractional Kelly with hard caps.
+12. Saves the simulated position to the paper ledger.
 
 Open positions are refreshed on later runs. Positions close automatically in the paper ledger when they hit the configured stop-loss or take-profit threshold.
 
@@ -157,10 +159,16 @@ Open positions are refreshed on later runs. Positions close automatically in the
 
 Every run emits a public-safe snapshot for demos and debugging:
 
-- `data/latest-actions.json` gives the latest portfolio summary, strategy thresholds, new entries, exits, open positions, closed positions, skip counts, and the detailed candidate trace.
-- `data/considered-markets-latest.csv` gives one row per traced candidate market with ticker, condition id, question, action, skip reason, quote, model probability, edge, liquidity, flow, prices, and end date.
+- `data/latest-actions.json` gives the latest portfolio summary, strategy thresholds, a cycle-level `decision_explainer`, new entries, exits, open positions, closed positions, skip counts, and the detailed candidate trace.
+- `data/considered-markets-latest.csv` gives one row per traced candidate market with ticker, condition id, question, action, skip reason, quote, model probability, confidence, evidence quality, counter-case, liquidity, flow, prices, and end date.
 
 The trace records both successful entries and rejected candidates. It also explains stock-level skips such as weak sentiment, already-open positions, or full portfolio capacity against the available market rows when market metadata exists.
+For every passed entry candidate, the exports now include:
+
+- `evidence_quality_score`: a normalized quality score in `0..1`
+- `counter_case`: short reasons why the trade could still fail
+- `decision_explainer`: a cycle summary of what the bot did and why
+
 In the JSON, `skipped_counts` counts strategy decisions, while `candidate_reason_counts` counts rows in the detailed trace.
 
 ## Data Quality

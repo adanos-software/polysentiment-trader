@@ -31,6 +31,8 @@ def test_trader_buys_yes_for_bullish_signal():
     assert len(run.orders) == 1
     assert run.orders[0].side == "YES"
     assert run.orders[0].stake == pytest.approx(25.0)
+    assert run.orders[0].evidence_quality_score >= trader.config.min_evidence_quality_score
+    assert run.orders[0].counter_case
     assert portfolio.cash == pytest.approx(975.0)
 
 
@@ -114,6 +116,7 @@ def test_report_includes_entries_and_skips():
     assert "POLYSENTIMENT TRADER" in report
     assert "AAPL   BUY YES" in report
     assert "weak_sentiment=1" in report
+    assert "\nDecision" in report
     assert any(trace.action == "opened" for trace in run.considered_markets)
     assert any(trace.reason == "weak_sentiment" for trace in run.considered_markets)
 
@@ -184,3 +187,32 @@ def test_trader_can_require_clob_token_ids():
 
     assert len(run.orders) == 0
     assert run.rejection_counts()["missing_token_id"] == 1
+
+
+def test_trader_rejects_low_evidence_quality_market():
+    trader = PaperTrader(StrategyConfig(min_edge=0.001, min_evidence_quality_score=0.45))
+
+    run = trader.run(
+        [stock(sentiment=0.13, buzz=45.0)],
+        [
+            detail(
+                markets=[
+                    market(
+                        yes=0.40,
+                        no=0.60,
+                        sentiment=0.01,
+                        liquidity=1100.0,
+                        trade_count=1,
+                        volume_24h=50.0,
+                    )
+                ]
+            )
+        ],
+        Portfolio.new(1000.0),
+        now=datetime(2026, 4, 19, 12, 0, 0),
+    )
+
+    assert len(run.orders) == 0
+    assert run.rejection_counts()["low_evidence_quality"] == 1
+    assert run.considered_markets[0].evidence_quality_score is not None
+    assert run.considered_markets[0].reason == "low_evidence_quality"
