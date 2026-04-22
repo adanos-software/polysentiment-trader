@@ -102,6 +102,7 @@ polysentiment-trader --loop --interval-minutes 1 --cycles 3
 ```
 
 In loop mode, a failed API cycle is logged and skipped; the next cycle continues after the configured interval. One-shot runs still fail fast so setup and API issues are visible.
+Single-stock detail fetch failures are softer: the bot logs the affected ticker, skips that detail payload for the cycle, and keeps processing the rest of the market set.
 
 The default ledger path is:
 

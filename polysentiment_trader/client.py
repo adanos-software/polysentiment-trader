@@ -58,6 +58,10 @@ class AdanosClient:
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             raise AdanosApiError(f"HTTP {exc.code} from {url}: {detail}") from exc
+        except TimeoutError as exc:
+            raise AdanosApiError(
+                f"Timed out reading {url} after {self.timeout_seconds:.1f}s",
+            ) from exc
         except URLError as exc:
             raise AdanosApiError(f"Could not reach {url}: {exc.reason}") from exc
 

@@ -9,7 +9,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-from polysentiment_trader.client import AdanosClient
+from polysentiment_trader.client import AdanosApiError, AdanosClient
 from polysentiment_trader.engine import (
     PaperTrader,
     StrategyConfig,
@@ -63,14 +63,14 @@ def run_once(args: argparse.Namespace) -> None:
     portfolio = load_portfolio(ledger_path, initial_bankroll=args.bankroll)
 
     trending = client.get_polymarket_trending(days=args.days, limit=args.scan_limit)
-    details = []
-    for item in trending:
-        ticker = str(item.get("ticker") or "").strip().upper()
-        if not ticker:
-            continue
-        detail = client.get_polymarket_stock(ticker, days=args.days)
-        if detail:
-            details.append(detail)
+    details, detail_failures = load_stock_details(client=client, trending=trending, days=args.days)
+    if detail_failures:
+        print("\nSkipped stock detail fetches")
+        for ticker, message in detail_failures[:5]:
+            print(f"  {ticker}: {message}")
+        hidden = len(detail_failures) - 5
+        if hidden > 0:
+            print(f"  ... and {hidden} more")
 
     run = PaperTrader(config).run(trending=trending, details=details, portfolio=portfolio)
     print(format_report(run))
@@ -104,6 +104,27 @@ def optional_path(raw_path: str) -> Path | None:
     if raw_path.strip().lower() in {"", "none", "off", "false", "0"}:
         return None
     return Path(raw_path).expanduser()
+
+
+def load_stock_details(
+    client: AdanosClient,
+    trending: list[dict[str, object]],
+    days: int,
+) -> tuple[list[dict[str, object]], list[tuple[str, str]]]:
+    details: list[dict[str, object]] = []
+    failures: list[tuple[str, str]] = []
+    for item in trending:
+        ticker = str(item.get("ticker") or "").strip().upper()
+        if not ticker:
+            continue
+        try:
+            detail = client.get_polymarket_stock(ticker, days=days)
+        except AdanosApiError as exc:
+            failures.append((ticker, str(exc)))
+            continue
+        if detail:
+            details.append(detail)
+    return details, failures
 
 
 def build_parser() -> argparse.ArgumentParser:

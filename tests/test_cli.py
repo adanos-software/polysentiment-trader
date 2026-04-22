@@ -5,7 +5,7 @@ import pytest
 from polysentiment_trader import cli
 from polysentiment_trader.client import AdanosApiError
 
-from tests.factories import detail, stock
+from tests.factories import detail, market, stock
 
 
 class FakeClient:
@@ -17,6 +17,19 @@ class FakeClient:
 
     def get_polymarket_stock(self, ticker, days):
         return detail(ticker=ticker)
+
+
+class FakePartialFailureClient(FakeClient):
+    def get_polymarket_trending(self, days, limit):
+        return [stock(ticker="AAPL"), stock(ticker="MSFT")]
+
+    def get_polymarket_stock(self, ticker, days):
+        if ticker == "AAPL":
+            raise AdanosApiError("Timed out reading https://api.adanos.org/test after 20.0s")
+        return detail(
+            ticker=ticker,
+            markets=[market(question=f"Will {ticker} close above $240 this week?")],
+        )
 
 
 def args_for(tmp_path):
@@ -52,6 +65,18 @@ def test_run_once_saves_ledger_before_transparency_export_failure(monkeypatch, t
         cli.run_once(args_for(tmp_path))
 
     assert (tmp_path / "paper-portfolio.json").exists()
+
+
+def test_run_once_skips_stock_detail_api_failures(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(cli, "AdanosClient", FakePartialFailureClient)
+
+    cli.run_once(args_for(tmp_path))
+
+    captured = capsys.readouterr()
+    assert "Skipped stock detail fetches" in captured.out
+    assert "AAPL: Timed out reading" in captured.out
+    assert (tmp_path / "paper-portfolio.json").exists()
+    assert (tmp_path / "latest-actions.json").exists()
 
 
 def test_loop_logs_failure_and_continues_to_next_cycle(tmp_path, capsys):
