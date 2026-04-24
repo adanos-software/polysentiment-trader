@@ -43,6 +43,12 @@ def args_for(tmp_path):
         min_edge=0.001,
         min_buzz_score=40.0,
         min_abs_sentiment=0.12,
+        min_price=0.05,
+        max_price=0.85,
+        stop_loss_pct=-0.20,
+        take_profit_pct=0.35,
+        take_profit_cooldown_minutes=240,
+        max_stop_losses_per_day=1,
         require_clob_token_ids=False,
         ledger=str(tmp_path / "paper-portfolio.json"),
         actions_out=str(tmp_path / "latest-actions.json"),
@@ -51,6 +57,18 @@ def args_for(tmp_path):
         scan_limit=25,
         no_write=False,
     )
+
+
+def test_build_parser_exposes_risk_controls():
+    parser = cli.build_parser()
+
+    args = parser.parse_args(["--api-key", "test-key"])
+
+    assert args.min_edge == pytest.approx(0.04)
+    assert args.min_abs_sentiment == pytest.approx(0.18)
+    assert args.max_price == pytest.approx(0.65)
+    assert args.take_profit_cooldown_minutes == 240
+    assert args.max_stop_losses_per_day == 1
 
 
 def test_run_once_saves_ledger_before_transparency_export_failure(monkeypatch, tmp_path):

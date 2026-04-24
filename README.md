@@ -12,7 +12,7 @@ PolySentimentTrader turns prediction-market sentiment signals into simulated YES
 - Simulates YES/NO entries in a local JSON paper ledger.
 - Marks open positions to the latest API prices on each run.
 - Writes public-safe transparency exports for the latest run.
-- Applies conservative risk rules: max positions, max stake, stop-loss, take-profit, and minimum edge.
+- Applies conservative risk rules: max positions, max stake, stop-loss, take-profit, cooldowns after wins, same-day stop-loss caps, and minimum edge.
 - Supports one-shot runs and scheduled loops.
 
 ## Safety Model
@@ -154,7 +154,7 @@ For each trending ticker, the bot:
 11. Sizes the position using fractional Kelly with hard caps.
 12. Saves the simulated position to the paper ledger.
 
-Open positions are refreshed on later runs. Positions close automatically in the paper ledger when they hit the configured stop-loss or take-profit threshold.
+Open positions are refreshed on later runs. Positions close automatically in the paper ledger when they hit the configured stop-loss or take-profit threshold. The default strategy is intentionally stricter now: it requires higher edge and sentiment, ignores pricier contracts above `0.65`, waits four hours before re-entering a winning ticker-side, and blocks further same-day entries after the first stop-loss on the same ticker-side.
 
 ## Transparency Exports
 
@@ -190,6 +190,8 @@ The current paper mode does not require CLOB token ids. It still parses them whe
 polysentiment-trader --scan-limit 50
 polysentiment-trader --min-edge 0.005 --max-stake 50
 polysentiment-trader --bankroll 250 --max-stake 10
+polysentiment-trader --max-price 0.60 --take-profit-cooldown-minutes 120
+polysentiment-trader --max-stop-losses-per-day 1 --stop-loss-pct -0.15
 polysentiment-trader --ledger data/demo-portfolio.json
 polysentiment-trader --actions-out data/demo-actions.json
 polysentiment-trader --markets-out data/demo-markets.csv

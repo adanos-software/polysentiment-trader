@@ -92,6 +92,96 @@ def test_mark_to_market_closes_take_profit():
     assert portfolio.cash == pytest.approx(108.0)
 
 
+def test_trader_blocks_same_side_reentry_during_take_profit_cooldown():
+    trader = PaperTrader(
+        StrategyConfig(
+            min_edge=0.001,
+            take_profit_cooldown_minutes=240,
+            max_stop_losses_per_day=3,
+        )
+    )
+    portfolio = Portfolio(
+        initial_bankroll=100.0,
+        cash=100.0,
+        closed_positions=[
+            Position(
+                ticker="AAPL",
+                condition_id="closed-aapl",
+                question="Will Apple (AAPL) close above $240 this week?",
+                side="YES",
+                shares=50.0,
+                entry_price=0.40,
+                current_price=0.56,
+                stake=20.0,
+                opened_at="2026-04-19T10:00:00",
+                closed_at="2026-04-19T12:00:00",
+                exit_reason="take_profit",
+                realized_pnl=8.0,
+                thesis="closed winner",
+                confidence=0.8,
+                edge=0.1,
+                status="closed",
+            )
+        ],
+    )
+
+    run = trader.run(
+        [stock()],
+        [detail()],
+        portfolio,
+        now=datetime(2026, 4, 19, 13, 0, 0),
+    )
+
+    assert len(run.orders) == 0
+    assert run.rejection_counts()["take_profit_cooldown"] == 1
+    assert run.considered_markets[0].reason == "take_profit_cooldown"
+
+
+def test_trader_blocks_same_side_reentry_after_daily_stop_loss_limit():
+    trader = PaperTrader(
+        StrategyConfig(
+            min_edge=0.001,
+            take_profit_cooldown_minutes=0,
+            max_stop_losses_per_day=1,
+        )
+    )
+    portfolio = Portfolio(
+        initial_bankroll=100.0,
+        cash=100.0,
+        closed_positions=[
+            Position(
+                ticker="AAPL",
+                condition_id="closed-aapl",
+                question="Will Apple (AAPL) close above $240 this week?",
+                side="YES",
+                shares=50.0,
+                entry_price=0.40,
+                current_price=0.30,
+                stake=20.0,
+                opened_at="2026-04-19T10:00:00",
+                closed_at="2026-04-19T12:00:00",
+                exit_reason="stop_loss",
+                realized_pnl=-5.0,
+                thesis="closed loser",
+                confidence=0.8,
+                edge=0.1,
+                status="closed",
+            )
+        ],
+    )
+
+    run = trader.run(
+        [stock()],
+        [detail()],
+        portfolio,
+        now=datetime(2026, 4, 19, 13, 0, 0),
+    )
+
+    assert len(run.orders) == 0
+    assert run.rejection_counts()["stop_loss_limit_reached"] == 1
+    assert run.considered_markets[0].reason == "stop_loss_limit_reached"
+
+
 def test_portfolio_round_trip(tmp_path):
     path = tmp_path / "portfolio.json"
     portfolio = Portfolio.new(500.0)
@@ -190,7 +280,13 @@ def test_trader_can_require_clob_token_ids():
 
 
 def test_trader_rejects_low_evidence_quality_market():
-    trader = PaperTrader(StrategyConfig(min_edge=0.001, min_evidence_quality_score=0.45))
+    trader = PaperTrader(
+        StrategyConfig(
+            min_edge=0.001,
+            min_evidence_quality_score=0.45,
+            min_abs_sentiment=0.12,
+        )
+    )
 
     run = trader.run(
         [stock(sentiment=0.13, buzz=45.0)],

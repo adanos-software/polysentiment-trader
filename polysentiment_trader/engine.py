@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field, fields
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Literal, Optional
 
@@ -42,6 +42,15 @@ def as_int(value: Any, default: int = 0) -> int:
 
 def isoformat(dt: datetime) -> str:
     return dt.replace(microsecond=0).isoformat()
+
+
+def parse_isoformat(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 def derive_yes_direction(market_type: str, question: str, ticker: str) -> Optional[int]:
@@ -123,14 +132,16 @@ class StrategyConfig:
     min_stock_trade_count: int = 10
     min_market_trade_count: int = 1
     min_liquidity: float = 1000.0
-    min_abs_sentiment: float = 0.12
-    min_edge: float = 0.015
+    min_abs_sentiment: float = 0.18
+    min_edge: float = 0.04
     min_evidence_quality_score: float = 0.45
     min_price: float = 0.05
-    max_price: float = 0.85
+    max_price: float = 0.65
     kelly_fraction: float = 0.25
     stop_loss_pct: float = -0.20
     take_profit_pct: float = 0.35
+    take_profit_cooldown_minutes: int = 240
+    max_stop_losses_per_day: int = 1
     allow_stable_trend: bool = True
     require_clob_token_ids: bool = False
 
@@ -445,7 +456,7 @@ class PaperTrader:
         stocks = [StockSignal.from_api(item) for item in trending]
         details_by_ticker, data_quality_rejections, data_quality_traces = self._details_with_rejections(details, now)
         exits = self.mark_to_market(portfolio, details_by_ticker, now)
-        orders, rejections, considered_markets = self.build_orders(stocks, details_by_ticker, portfolio)
+        orders, rejections, considered_markets = self.build_orders(stocks, details_by_ticker, portfolio, now)
         rejections = data_quality_rejections + rejections
         considered_markets = data_quality_traces + considered_markets
         for order in orders:
@@ -525,6 +536,7 @@ class PaperTrader:
         stocks: Iterable[StockSignal],
         details_by_ticker: dict[str, list[MarketSignal]],
         portfolio: Portfolio,
+        now: datetime,
     ) -> tuple[list[Order], list[Rejection], list[CandidateTrace]]:
         orders: list[Order] = []
         rejections: list[Rejection] = []
@@ -565,7 +577,7 @@ class PaperTrader:
                 continue
 
             for market in markets:
-                order, rejection = self._build_order(stock, market, portfolio, open_keys)
+                order, rejection = self._build_order(stock, market, portfolio, open_keys, now)
                 if order is not None:
                     orders.append(order)
                     traces.append(self._order_trace(stock, market, order))
@@ -623,6 +635,7 @@ class PaperTrader:
         market: MarketSignal,
         portfolio: Portfolio,
         open_keys: set[tuple[str, TradeSide]],
+        now: datetime,
     ) -> tuple[Optional[Order], Optional[Rejection]]:
         desired_direction = 1 if (stock.sentiment_score or 0) > 0 else -1
         yes_direction = derive_yes_direction(market.market_type, market.question, stock.ticker)
@@ -632,6 +645,9 @@ class PaperTrader:
         side: TradeSide = "YES" if yes_direction == desired_direction else "NO"
         if (market.condition_id, side) in open_keys:
             return None, Rejection(stock.ticker, market.condition_id, "already_open", "same market side")
+        limit_rejection = self._reentry_limit_rejection(stock.ticker, side, portfolio, market.condition_id, now)
+        if limit_rejection is not None:
+            return None, limit_rejection
 
         quote = market.quote_for(side)
         if quote is None:
@@ -704,6 +720,78 @@ class PaperTrader:
             ),
             None,
         )
+
+    def _reentry_limit_rejection(
+        self,
+        ticker: str,
+        side: TradeSide,
+        portfolio: Portfolio,
+        condition_id: str,
+        now: datetime,
+    ) -> Optional[Rejection]:
+        same_day_stop_losses = self._same_day_stop_loss_count(ticker, side, portfolio, now)
+        if same_day_stop_losses >= self.config.max_stop_losses_per_day:
+            return Rejection(
+                ticker,
+                condition_id,
+                "stop_loss_limit_reached",
+                f"{same_day_stop_losses} stop-loss exit(s) today",
+            )
+
+        if self.config.take_profit_cooldown_minutes <= 0:
+            return None
+
+        last_take_profit = self._last_exit(ticker, side, "take_profit", portfolio)
+        if last_take_profit is None:
+            return None
+
+        closed_at = parse_isoformat(last_take_profit.closed_at)
+        if closed_at is None:
+            return None
+
+        cooldown_until = closed_at + timedelta(minutes=self.config.take_profit_cooldown_minutes)
+        if now >= cooldown_until:
+            return None
+
+        remaining_minutes = max(1, int((cooldown_until - now).total_seconds() // 60))
+        return Rejection(
+            ticker,
+            condition_id,
+            "take_profit_cooldown",
+            f"{remaining_minutes}m remaining after take-profit",
+        )
+
+    def _same_day_stop_loss_count(
+        self,
+        ticker: str,
+        side: TradeSide,
+        portfolio: Portfolio,
+        now: datetime,
+    ) -> int:
+        count = 0
+        for position in portfolio.closed_positions:
+            if position.ticker != ticker or position.side != side or position.exit_reason != "stop_loss":
+                continue
+            closed_at = parse_isoformat(position.closed_at)
+            if closed_at is not None and closed_at.date() == now.date():
+                count += 1
+        return count
+
+    def _last_exit(
+        self,
+        ticker: str,
+        side: TradeSide,
+        reason: str,
+        portfolio: Portfolio,
+    ) -> Optional[Position]:
+        matches = [
+            position
+            for position in portfolio.closed_positions
+            if position.ticker == ticker and position.side == side and position.exit_reason == reason
+        ]
+        if not matches:
+            return None
+        return max(matches, key=lambda position: position.closed_at or "")
 
     def _estimate_probability(self, stock: StockSignal, market: MarketSignal, direction: int) -> float:
         stock_signal = abs(stock.sentiment_score or 0.0)

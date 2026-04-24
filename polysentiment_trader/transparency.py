@@ -132,6 +132,8 @@ def strategy_payload(config: StrategyConfig) -> dict[str, Any]:
         "kelly_fraction": config.kelly_fraction,
         "stop_loss_pct": config.stop_loss_pct,
         "take_profit_pct": config.take_profit_pct,
+        "take_profit_cooldown_minutes": config.take_profit_cooldown_minutes,
+        "max_stop_losses_per_day": config.max_stop_losses_per_day,
         "allow_stable_trend": config.allow_stable_trend,
         "require_clob_token_ids": config.require_clob_token_ids,
     }

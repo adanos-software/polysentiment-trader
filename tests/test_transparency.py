@@ -37,6 +37,8 @@ def test_actions_payload_includes_orders_skips_and_portfolio():
     assert payload["skipped_counts"]["weak_sentiment"] == 1
     assert payload["candidate_action_counts"]["opened"] == 1
     assert payload["candidate_reason_counts"]["weak_sentiment"] == 1
+    assert payload["strategy"]["take_profit_cooldown_minutes"] == config.take_profit_cooldown_minutes
+    assert payload["strategy"]["max_stop_losses_per_day"] == config.max_stop_losses_per_day
     assert payload["considered_markets_count"] >= 2
     assert payload["considered_markets"][0]["evidence_quality_score"] is not None
     assert "counter_case" in payload["considered_markets"][0]
