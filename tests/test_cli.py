@@ -65,10 +65,11 @@ def test_build_parser_exposes_risk_controls():
     args = parser.parse_args(["--api-key", "test-key"])
 
     assert args.min_edge == pytest.approx(0.04)
-    assert args.min_abs_sentiment == pytest.approx(0.18)
+    assert args.min_buzz_score == pytest.approx(35.0)
+    assert args.min_abs_sentiment == pytest.approx(0.12)
     assert args.max_price == pytest.approx(0.65)
     assert args.take_profit_cooldown_minutes == 240
-    assert args.max_stop_losses_per_day == 1
+    assert args.max_stop_losses_per_day == 2
 
 
 def test_build_parser_uses_current_working_directory_for_runtime_defaults(monkeypatch, tmp_path):

@@ -153,14 +153,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-positions", type=int, default=5)
     parser.add_argument("--max-stake", type=float, default=25.0)
     parser.add_argument("--min-edge", type=float, default=0.04)
-    parser.add_argument("--min-buzz-score", type=float, default=40.0)
-    parser.add_argument("--min-abs-sentiment", type=float, default=0.18)
+    parser.add_argument("--min-buzz-score", type=float, default=35.0)
+    parser.add_argument("--min-abs-sentiment", type=float, default=0.12)
     parser.add_argument("--min-price", type=float, default=0.05)
     parser.add_argument("--max-price", type=float, default=0.65)
     parser.add_argument("--stop-loss-pct", type=float, default=-0.20)
     parser.add_argument("--take-profit-pct", type=float, default=0.35)
     parser.add_argument("--take-profit-cooldown-minutes", type=int, default=240)
-    parser.add_argument("--max-stop-losses-per-day", type=int, default=1)
+    parser.add_argument("--max-stop-losses-per-day", type=int, default=2)
     parser.add_argument(
         "--require-clob-token-ids",
         action="store_true",

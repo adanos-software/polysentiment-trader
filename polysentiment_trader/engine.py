@@ -128,11 +128,11 @@ class StrategyConfig:
     max_position_pct: float = 0.05
     max_stake: float = 25.0
     min_stake: float = 5.0
-    min_buzz_score: float = 40.0
+    min_buzz_score: float = 35.0
     min_stock_trade_count: int = 10
     min_market_trade_count: int = 1
     min_liquidity: float = 1000.0
-    min_abs_sentiment: float = 0.18
+    min_abs_sentiment: float = 0.12
     min_edge: float = 0.04
     min_evidence_quality_score: float = 0.45
     min_price: float = 0.05
@@ -141,7 +141,7 @@ class StrategyConfig:
     stop_loss_pct: float = -0.20
     take_profit_pct: float = 0.35
     take_profit_cooldown_minutes: int = 240
-    max_stop_losses_per_day: int = 1
+    max_stop_losses_per_day: int = 2
     allow_stable_trend: bool = True
     require_clob_token_ids: bool = False
 
