@@ -57,6 +57,52 @@ def test_trader_buys_yes_when_yes_is_bearish_and_signal_is_bearish():
     assert run.orders[0].price == pytest.approx(0.40)
 
 
+def test_trader_sizes_same_cycle_orders_against_remaining_cash():
+    trader = PaperTrader(
+        StrategyConfig(
+            min_edge=0.001,
+            min_stake=5.0,
+            max_stake=10.0,
+            max_position_pct=1.0,
+            max_positions=2,
+            min_evidence_quality_score=0.0,
+            kelly_fraction=1.0,
+        )
+    )
+    portfolio = Portfolio.new(10.0)
+    liquid_market = {
+        "yes": 0.10,
+        "no": 0.90,
+        "sentiment": 1.0,
+        "liquidity": 100_000.0,
+        "trade_count": 100,
+    }
+
+    run = trader.run(
+        [stock(ticker="AAPL", sentiment=1.0, buzz=100.0), stock(ticker="MSFT", sentiment=1.0, buzz=100.0)],
+        [
+            detail(ticker="AAPL", markets=[market(condition_id="aapl", **liquid_market)]),
+            detail(
+                ticker="MSFT",
+                markets=[
+                    market(
+                        condition_id="msft",
+                        question="Will Microsoft (MSFT) close above $500 this week?",
+                        **liquid_market,
+                    )
+                ],
+            ),
+        ],
+        portfolio,
+        now=datetime(2026, 4, 19, 12, 0, 0),
+    )
+
+    assert [(order.ticker, order.stake) for order in run.orders] == [("AAPL", pytest.approx(8.29))]
+    assert [(position.ticker, position.stake) for position in portfolio.positions] == [("AAPL", pytest.approx(8.29))]
+    assert run.rejection_counts()["stake_too_small"] == 1
+    assert portfolio.cash == pytest.approx(1.71)
+
+
 def test_mark_to_market_closes_take_profit():
     trader = PaperTrader(StrategyConfig(take_profit_pct=0.35))
     portfolio = Portfolio(

@@ -20,15 +20,16 @@ from polysentiment_trader.engine import (
 from polysentiment_trader.transparency import write_transparency_exports
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_LEDGER = PROJECT_ROOT / "data" / "paper-portfolio.json"
-DEFAULT_ACTIONS = PROJECT_ROOT / "data" / "latest-actions.json"
-DEFAULT_MARKETS = PROJECT_ROOT / "data" / "considered-markets-latest.csv"
 DEFAULT_BASE_URL = "https://api.adanos.org"
 
 
-def load_dotenv(path: Path = PROJECT_ROOT / ".env") -> None:
+def runtime_data_path(filename: str) -> Path:
+    return Path.cwd() / "data" / filename
+
+
+def load_dotenv(path: Path | None = None) -> None:
     """Load simple KEY=VALUE pairs without overriding existing environment."""
+    path = path or Path.cwd() / ".env"
     if not path.exists():
         return
     for raw_line in path.read_text(encoding="utf-8").splitlines():
@@ -135,14 +136,17 @@ def load_stock_details(
 
 def build_parser() -> argparse.ArgumentParser:
     load_dotenv()
+    default_ledger = runtime_data_path("paper-portfolio.json")
+    default_actions = runtime_data_path("latest-actions.json")
+    default_markets = runtime_data_path("considered-markets-latest.csv")
     parser = argparse.ArgumentParser(
         description="Papertrade Polymarket contracts with Adanos sentiment data.",
     )
     parser.add_argument("--base-url", default=os.getenv("ADANOS_BASE_URL", DEFAULT_BASE_URL))
     parser.add_argument("--api-key", default=os.getenv("ADANOS_API_KEY"))
-    parser.add_argument("--ledger", default=str(DEFAULT_LEDGER))
-    parser.add_argument("--actions-out", default=os.getenv("POLYSENTIMENT_ACTIONS_OUT", str(DEFAULT_ACTIONS)))
-    parser.add_argument("--markets-out", default=os.getenv("POLYSENTIMENT_MARKETS_OUT", str(DEFAULT_MARKETS)))
+    parser.add_argument("--ledger", default=str(default_ledger))
+    parser.add_argument("--actions-out", default=os.getenv("POLYSENTIMENT_ACTIONS_OUT", str(default_actions)))
+    parser.add_argument("--markets-out", default=os.getenv("POLYSENTIMENT_MARKETS_OUT", str(default_markets)))
     parser.add_argument("--bankroll", type=float, default=1000.0)
     parser.add_argument("--days", type=int, default=1)
     parser.add_argument("--scan-limit", type=int, default=25)

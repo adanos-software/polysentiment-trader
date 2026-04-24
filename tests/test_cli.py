@@ -71,6 +71,22 @@ def test_build_parser_exposes_risk_controls():
     assert args.max_stop_losses_per_day == 1
 
 
+def test_build_parser_uses_current_working_directory_for_runtime_defaults(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ADANOS_API_KEY", raising=False)
+    monkeypatch.delenv("POLYSENTIMENT_ACTIONS_OUT", raising=False)
+    monkeypatch.delenv("POLYSENTIMENT_MARKETS_OUT", raising=False)
+    (tmp_path / ".env").write_text("ADANOS_API_KEY=env-key\n", encoding="utf-8")
+
+    parser = cli.build_parser()
+    args = parser.parse_args([])
+
+    assert args.api_key == "env-key"
+    assert args.ledger == str(tmp_path / "data" / "paper-portfolio.json")
+    assert args.actions_out == str(tmp_path / "data" / "latest-actions.json")
+    assert args.markets_out == str(tmp_path / "data" / "considered-markets-latest.csv")
+
+
 def test_run_once_saves_ledger_before_transparency_export_failure(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "AdanosClient", FakeClient)
 

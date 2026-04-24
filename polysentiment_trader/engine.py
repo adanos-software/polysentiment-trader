@@ -544,6 +544,7 @@ class PaperTrader:
         open_keys = {position.key for position in portfolio.open_positions()}
         open_tickers = {position.ticker for position in portfolio.open_positions()}
         remaining_slots = max(0, self.config.max_positions - len(open_keys))
+        available_cash = portfolio.cash
 
         for stock in sorted(stocks, key=lambda item: (-item.buzz_score, item.ticker)):
             if len(orders) >= remaining_slots:
@@ -577,9 +578,10 @@ class PaperTrader:
                 continue
 
             for market in markets:
-                order, rejection = self._build_order(stock, market, portfolio, open_keys, now)
+                order, rejection = self._build_order(stock, market, portfolio, open_keys, now, available_cash)
                 if order is not None:
                     orders.append(order)
+                    available_cash -= order.stake
                     traces.append(self._order_trace(stock, market, order))
                     open_keys.add((order.condition_id, order.side))
                     open_tickers.add(order.ticker)
@@ -636,6 +638,7 @@ class PaperTrader:
         portfolio: Portfolio,
         open_keys: set[tuple[str, TradeSide]],
         now: datetime,
+        available_cash: float,
     ) -> tuple[Optional[Order], Optional[Rejection]]:
         desired_direction = 1 if (stock.sentiment_score or 0) > 0 else -1
         yes_direction = derive_yes_direction(market.market_type, market.question, stock.ticker)
@@ -684,7 +687,7 @@ class PaperTrader:
         if edge < self.config.min_edge:
             return None, Rejection(stock.ticker, market.condition_id, "low_edge", f"{edge:.3f}")
 
-        stake = self._size_stake(quote, probability, portfolio)
+        stake = self._size_stake(quote, probability, portfolio, available_cash)
         if stake < self.config.min_stake:
             return None, Rejection(stock.ticker, market.condition_id, "stake_too_small", f"{stake:.2f}")
 
@@ -805,12 +808,19 @@ class PaperTrader:
         flow_bonus = clamp(market.trade_count / 250.0, 0.0, 1.0) * 0.015
         return clamp(0.50 + (signal_strength * 0.25) + trend_bonus + heat_bonus + liquidity_bonus + flow_bonus, 0.01, 0.99)
 
-    def _size_stake(self, price: float, probability: float, portfolio: Portfolio) -> float:
+    def _size_stake(
+        self,
+        price: float,
+        probability: float,
+        portfolio: Portfolio,
+        available_cash: Optional[float] = None,
+    ) -> float:
         if price >= 1.0 or probability <= price:
             return 0.0
         kelly = (probability - price) / (1.0 - price)
         bankroll = max(portfolio.equity(), 0.0)
-        risk_budget = min(self.config.max_stake, bankroll * self.config.max_position_pct, portfolio.cash)
+        cash_budget = portfolio.cash if available_cash is None else max(available_cash, 0.0)
+        risk_budget = min(self.config.max_stake, bankroll * self.config.max_position_pct, cash_budget)
         return round(min(bankroll * max(0.0, kelly) * self.config.kelly_fraction, risk_budget), 2)
 
     def _evidence_quality_score(self, stock: StockSignal, market: MarketSignal) -> float:

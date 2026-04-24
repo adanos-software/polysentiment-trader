@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from typing import Any, Literal, Optional
@@ -18,6 +19,20 @@ def as_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def as_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"true", "1", "yes", "y", "on"}:
+            return True
+        if text in {"false", "0", "no", "n", "off", ""}:
+            return False
+    return bool(value)
 
 
 def as_int(value: Any, default: int = 0) -> int:
@@ -96,9 +111,9 @@ class MarketResolver:
         if not question:
             return None, DataQualityIssue(ticker, condition_id, "market_missing_question", "missing question")
 
-        if bool(data.get("closed")) or bool(data.get("archived")):
+        if as_bool(data.get("closed")) or as_bool(data.get("archived")):
             return None, DataQualityIssue(ticker, condition_id, "market_closed", "closed or archived")
-        if not bool(data.get("active", True)):
+        if not as_bool(data.get("active"), default=True):
             return None, DataQualityIssue(ticker, condition_id, "market_closed", "inactive")
 
         end_date = parse_market_date(data.get("end_date") or data.get("endDate"))
@@ -115,10 +130,14 @@ class MarketResolver:
             return None, price_issue
 
         liquidity = as_float(data.get("liquidity"))
+        if not math.isfinite(liquidity):
+            return None, DataQualityIssue(ticker, condition_id, "invalid_liquidity", f"liquidity={liquidity}")
         if liquidity < 0:
             return None, DataQualityIssue(ticker, condition_id, "invalid_liquidity", f"liquidity={liquidity:.2f}")
 
         volume_24h = as_float(data.get("volume_24h"))
+        if not math.isfinite(volume_24h):
+            return None, DataQualityIssue(ticker, condition_id, "invalid_volume", f"volume_24h={volume_24h}")
         if volume_24h < 0:
             return None, DataQualityIssue(ticker, condition_id, "invalid_volume", f"volume_24h={volume_24h:.2f}")
 
@@ -131,6 +150,8 @@ class MarketResolver:
             return None, DataQualityIssue(ticker, condition_id, "missing_token_id", "YES/NO CLOB token ids unavailable")
 
         sentiment_score = optional_float(data.get("sentiment_score"))
+        if sentiment_score is not None and not math.isfinite(sentiment_score):
+            return None, DataQualityIssue(ticker, condition_id, "invalid_sentiment", f"sentiment={sentiment_score}")
         if sentiment_score is not None and not -1.0 <= sentiment_score <= 1.0:
             return None, DataQualityIssue(ticker, condition_id, "invalid_sentiment", f"sentiment={sentiment_score:.3f}")
 
@@ -215,6 +236,8 @@ def validate_probability_price(
 ) -> Optional[DataQualityIssue]:
     if value is None:
         return None
+    if not math.isfinite(value):
+        return DataQualityIssue(ticker, condition_id, "price_out_of_range", f"{field_name}={value}")
     if 0.0 <= value <= 1.0:
         return None
     return DataQualityIssue(ticker, condition_id, "price_out_of_range", f"{field_name}={value:.4f}")
@@ -252,8 +275,10 @@ def extract_token_ids(data: dict[str, Any]) -> tuple[Optional[str], Optional[str
     tokens = parse_jsonish(data.get("tokens"))
     if isinstance(tokens, list):
         yes, no = token_ids_from_tokens(tokens)
-        if yes or no:
+        if yes and no:
             return yes, no
+    else:
+        yes = no = None
 
     outcomes = parse_jsonish(data.get("outcomes"))
     token_ids = parse_jsonish(
@@ -263,22 +288,20 @@ def extract_token_ids(data: dict[str, Any]) -> tuple[Optional[str], Optional[str
         or data.get("tokenIds")
     )
     if isinstance(outcomes, list) and isinstance(token_ids, list):
-        yes: Optional[str] = None
-        no: Optional[str] = None
         for outcome, token_id in zip(outcomes, token_ids):
             label = str(outcome).strip().lower()
             token = str(token_id).strip()
             if label == "yes":
-                yes = token or None
+                yes = yes or token or None
             elif label == "no":
-                no = token or None
+                no = no or token or None
         if yes or no:
             return yes, no
 
     if isinstance(token_ids, list) and len(token_ids) >= 2:
-        return str(token_ids[0]).strip() or None, str(token_ids[1]).strip() or None
+        return yes or str(token_ids[0]).strip() or None, no or str(token_ids[1]).strip() or None
 
-    return None, None
+    return yes, no
 
 
 def token_ids_from_tokens(tokens: list[Any]) -> tuple[Optional[str], Optional[str]]:

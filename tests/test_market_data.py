@@ -72,6 +72,45 @@ def test_resolver_rejects_invalid_probability_price():
     assert issue.reason == "price_out_of_range"
 
 
+def test_resolver_parses_string_market_status_flags():
+    market, issue = MarketResolver().resolve(
+        "AAPL",
+        payload(closed="false", archived="false", active="true"),
+        now=datetime(2026, 4, 19, 12, 0, 0),
+    )
+
+    assert issue is None
+    assert market is not None
+
+    market, issue = MarketResolver().resolve(
+        "AAPL",
+        payload(active="false"),
+        now=datetime(2026, 4, 19, 12, 0, 0),
+    )
+
+    assert market is None
+    assert issue is not None
+    assert issue.reason == "market_closed"
+
+
+def test_resolver_rejects_non_finite_numeric_fields():
+    for field_name, reason in (
+        ("yes_price", "price_out_of_range"),
+        ("liquidity", "invalid_liquidity"),
+        ("volume_24h", "invalid_volume"),
+        ("sentiment_score", "invalid_sentiment"),
+    ):
+        market, issue = MarketResolver().resolve(
+            "AAPL",
+            payload(**{field_name: "NaN"}),
+            now=datetime(2026, 4, 19, 12, 0, 0),
+        )
+
+        assert market is None
+        assert issue is not None
+        assert issue.reason == reason
+
+
 def test_quote_adapter_requires_token_id_when_requested():
     market, issue = MarketResolver().resolve(
         "AAPL",
@@ -117,3 +156,16 @@ def test_extract_token_ids_from_token_objects():
 
     assert yes == "yes-token"
     assert no == "no-token"
+
+
+def test_extract_token_ids_falls_back_when_token_objects_are_partial():
+    yes, no = extract_token_ids(
+        {
+            "tokens": [{"outcome": "Yes", "token_id": "yes-token"}],
+            "outcomes": '["Yes","No"]',
+            "clob_token_ids": '["yes-fallback","no-fallback"]',
+        }
+    )
+
+    assert yes == "yes-token"
+    assert no == "no-fallback"
