@@ -43,11 +43,12 @@ def args_for(tmp_path):
         min_edge=0.001,
         min_buzz_score=40.0,
         min_abs_sentiment=0.12,
-        min_price=0.05,
+        min_price=0.20,
         max_price=0.85,
         stop_loss_pct=-0.20,
         take_profit_pct=0.35,
         take_profit_cooldown_minutes=240,
+        stop_loss_cooldown_minutes=720,
         max_stop_losses_per_day=1,
         require_clob_token_ids=False,
         ledger=str(tmp_path / "paper-portfolio.json"),
@@ -67,8 +68,10 @@ def test_build_parser_exposes_risk_controls():
     assert args.min_edge == pytest.approx(0.04)
     assert args.min_buzz_score == pytest.approx(35.0)
     assert args.min_abs_sentiment == pytest.approx(0.12)
+    assert args.min_price == pytest.approx(0.20)
     assert args.max_price == pytest.approx(0.65)
     assert args.take_profit_cooldown_minutes == 240
+    assert args.stop_loss_cooldown_minutes == 720
     assert args.max_stop_losses_per_day == 2
 
 

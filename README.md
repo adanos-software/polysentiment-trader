@@ -154,7 +154,7 @@ For each trending ticker, the bot:
 11. Sizes the position using fractional Kelly with hard caps.
 12. Saves the simulated position to the paper ledger.
 
-Open positions are refreshed on later runs. Positions close automatically in the paper ledger when they hit the configured stop-loss or take-profit threshold. The default strategy stays selective about inactive markets, edge, liquidity, and falling flow, but now uses a moderate sentiment threshold, a `35` buzz floor, and allows a second same-day attempt after one stop-loss on the same ticker-side.
+Open positions are refreshed on later runs. Positions close automatically in the paper ledger when they hit the configured stop-loss or take-profit threshold. The default strategy now prioritizes survival over trade count: it avoids very cheap contracts below `0.20`, stays selective about inactive markets, edge, liquidity, and falling flow, and pauses ticker-side re-entry for 12 hours after a stop-loss. A stopped-out market side is never reopened.
 
 ## Transparency Exports
 
@@ -190,7 +190,8 @@ The current paper mode does not require CLOB token ids. It still parses them whe
 polysentiment-trader --scan-limit 50
 polysentiment-trader --min-edge 0.005 --max-stake 50
 polysentiment-trader --bankroll 250 --max-stake 10
-polysentiment-trader --max-price 0.60 --take-profit-cooldown-minutes 120
+polysentiment-trader --min-price 0.25 --max-price 0.60
+polysentiment-trader --take-profit-cooldown-minutes 120 --stop-loss-cooldown-minutes 1440
 polysentiment-trader --max-stop-losses-per-day 1 --stop-loss-pct -0.15
 polysentiment-trader --min-abs-sentiment 0.18 --min-buzz-score 40
 polysentiment-trader --ledger data/demo-portfolio.json

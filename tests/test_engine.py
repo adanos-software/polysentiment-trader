@@ -66,6 +66,7 @@ def test_trader_sizes_same_cycle_orders_against_remaining_cash():
             max_position_pct=1.0,
             max_positions=2,
             min_evidence_quality_score=0.0,
+            min_price=0.05,
             kelly_fraction=1.0,
         )
     )
@@ -188,6 +189,7 @@ def test_trader_blocks_same_side_reentry_after_daily_stop_loss_limit():
         StrategyConfig(
             min_edge=0.001,
             take_profit_cooldown_minutes=0,
+            stop_loss_cooldown_minutes=0,
             max_stop_losses_per_day=1,
         )
     )
@@ -226,6 +228,119 @@ def test_trader_blocks_same_side_reentry_after_daily_stop_loss_limit():
     assert len(run.orders) == 0
     assert run.rejection_counts()["stop_loss_limit_reached"] == 1
     assert run.considered_markets[0].reason == "stop_loss_limit_reached"
+
+
+def test_trader_blocks_same_market_reentry_after_stop_loss():
+    trader = PaperTrader(
+        StrategyConfig(
+            min_edge=0.001,
+            max_stop_losses_per_day=3,
+            stop_loss_cooldown_minutes=0,
+        )
+    )
+    portfolio = Portfolio(
+        initial_bankroll=100.0,
+        cash=100.0,
+        closed_positions=[
+            Position(
+                ticker="NVDA",
+                condition_id="nvda-market",
+                question="Will NVIDIA (NVDA) close above $210 on April 24?",
+                side="YES",
+                shares=50.0,
+                entry_price=0.40,
+                current_price=0.30,
+                stake=20.0,
+                opened_at="2026-04-24T17:00:00",
+                closed_at="2026-04-24T18:00:00",
+                exit_reason="stop_loss",
+                realized_pnl=-5.0,
+                thesis="closed loser",
+                confidence=0.8,
+                edge=0.1,
+                status="closed",
+            )
+        ],
+    )
+
+    run = trader.run(
+        [stock(ticker="NVDA")],
+        [
+            detail(
+                ticker="NVDA",
+                markets=[
+                    market(
+                        condition_id="nvda-market",
+                        question="Will NVIDIA (NVDA) close above $210 on April 24?",
+                    )
+                ],
+            )
+        ],
+        portfolio,
+        now=datetime(2026, 4, 24, 19, 0, 0),
+    )
+
+    assert len(run.orders) == 0
+    assert run.rejection_counts()["stop_loss_same_market"] == 1
+    assert run.considered_markets[0].reason == "stop_loss_same_market"
+
+
+def test_trader_blocks_ticker_side_reentry_during_stop_loss_cooldown():
+    trader = PaperTrader(
+        StrategyConfig(
+            min_edge=0.001,
+            max_stop_losses_per_day=3,
+            stop_loss_cooldown_minutes=720,
+        )
+    )
+    portfolio = Portfolio(
+        initial_bankroll=100.0,
+        cash=100.0,
+        closed_positions=[
+            Position(
+                ticker="TSLA",
+                condition_id="old-tsla-market",
+                question="Will Tesla (TSLA) close above $360 on April 27?",
+                side="NO",
+                shares=50.0,
+                entry_price=0.40,
+                current_price=0.30,
+                stake=20.0,
+                opened_at="2026-04-27T14:00:00",
+                closed_at="2026-04-27T15:00:00",
+                exit_reason="stop_loss",
+                realized_pnl=-5.0,
+                thesis="closed loser",
+                confidence=0.8,
+                edge=0.1,
+                status="closed",
+            )
+        ],
+    )
+
+    run = trader.run(
+        [stock(ticker="TSLA", sentiment=-0.55)],
+        [
+            detail(
+                ticker="TSLA",
+                markets=[
+                    market(
+                        condition_id="new-tsla-market",
+                        question="Will Tesla (TSLA) close above $380 end of April?",
+                        yes=0.55,
+                        no=0.45,
+                        sentiment=-0.5,
+                    )
+                ],
+            )
+        ],
+        portfolio,
+        now=datetime(2026, 4, 27, 16, 0, 0),
+    )
+
+    assert len(run.orders) == 0
+    assert run.rejection_counts()["stop_loss_cooldown"] == 1
+    assert run.considered_markets[0].reason == "stop_loss_cooldown"
 
 
 def test_portfolio_round_trip(tmp_path):

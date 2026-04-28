@@ -135,12 +135,13 @@ class StrategyConfig:
     min_abs_sentiment: float = 0.12
     min_edge: float = 0.04
     min_evidence_quality_score: float = 0.45
-    min_price: float = 0.05
+    min_price: float = 0.20
     max_price: float = 0.65
     kelly_fraction: float = 0.25
     stop_loss_pct: float = -0.20
     take_profit_pct: float = 0.35
     take_profit_cooldown_minutes: int = 240
+    stop_loss_cooldown_minutes: int = 720
     max_stop_losses_per_day: int = 2
     allow_stable_trend: bool = True
     require_clob_token_ids: bool = False
@@ -732,6 +733,30 @@ class PaperTrader:
         condition_id: str,
         now: datetime,
     ) -> Optional[Rejection]:
+        stopped_same_market = self._last_exit_for_condition(condition_id, side, "stop_loss", portfolio)
+        if stopped_same_market is not None:
+            return Rejection(
+                ticker,
+                condition_id,
+                "stop_loss_same_market",
+                "same market side already stopped out",
+            )
+
+        if self.config.stop_loss_cooldown_minutes > 0:
+            last_stop_loss = self._last_exit(ticker, side, "stop_loss", portfolio)
+            if last_stop_loss is not None:
+                closed_at = parse_isoformat(last_stop_loss.closed_at)
+                if closed_at is not None:
+                    cooldown_until = closed_at + timedelta(minutes=self.config.stop_loss_cooldown_minutes)
+                    if now < cooldown_until:
+                        remaining_minutes = max(1, int((cooldown_until - now).total_seconds() // 60))
+                        return Rejection(
+                            ticker,
+                            condition_id,
+                            "stop_loss_cooldown",
+                            f"{remaining_minutes}m remaining after stop-loss",
+                        )
+
         same_day_stop_losses = self._same_day_stop_loss_count(ticker, side, portfolio, now)
         if same_day_stop_losses >= self.config.max_stop_losses_per_day:
             return Rejection(
@@ -791,6 +816,22 @@ class PaperTrader:
             position
             for position in portfolio.closed_positions
             if position.ticker == ticker and position.side == side and position.exit_reason == reason
+        ]
+        if not matches:
+            return None
+        return max(matches, key=lambda position: position.closed_at or "")
+
+    def _last_exit_for_condition(
+        self,
+        condition_id: str,
+        side: TradeSide,
+        reason: str,
+        portfolio: Portfolio,
+    ) -> Optional[Position]:
+        matches = [
+            position
+            for position in portfolio.closed_positions
+            if position.condition_id == condition_id and position.side == side and position.exit_reason == reason
         ]
         if not matches:
             return None

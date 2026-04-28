@@ -61,6 +61,7 @@ def run_once(args: argparse.Namespace) -> None:
         stop_loss_pct=args.stop_loss_pct,
         take_profit_pct=args.take_profit_pct,
         take_profit_cooldown_minutes=args.take_profit_cooldown_minutes,
+        stop_loss_cooldown_minutes=args.stop_loss_cooldown_minutes,
         max_stop_losses_per_day=args.max_stop_losses_per_day,
         require_clob_token_ids=args.require_clob_token_ids,
     )
@@ -155,11 +156,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-edge", type=float, default=0.04)
     parser.add_argument("--min-buzz-score", type=float, default=35.0)
     parser.add_argument("--min-abs-sentiment", type=float, default=0.12)
-    parser.add_argument("--min-price", type=float, default=0.05)
+    parser.add_argument("--min-price", type=float, default=0.20)
     parser.add_argument("--max-price", type=float, default=0.65)
     parser.add_argument("--stop-loss-pct", type=float, default=-0.20)
     parser.add_argument("--take-profit-pct", type=float, default=0.35)
     parser.add_argument("--take-profit-cooldown-minutes", type=int, default=240)
+    parser.add_argument("--stop-loss-cooldown-minutes", type=int, default=720)
     parser.add_argument("--max-stop-losses-per-day", type=int, default=2)
     parser.add_argument(
         "--require-clob-token-ids",
