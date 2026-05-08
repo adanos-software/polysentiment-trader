@@ -134,6 +134,7 @@ class StrategyConfig:
     min_liquidity: float = 1000.0
     min_abs_sentiment: float = 0.12
     min_edge: float = 0.04
+    min_confidence: float = 0.0
     min_evidence_quality_score: float = 0.45
     min_price: float = 0.20
     max_price: float = 0.65
@@ -143,6 +144,8 @@ class StrategyConfig:
     take_profit_cooldown_minutes: int = 240
     stop_loss_cooldown_minutes: int = 720
     max_stop_losses_per_day: int = 2
+    block_ticker_stop_losses: int = 0
+    block_ticker_stop_loss_days: int = 7
     allow_stable_trend: bool = True
     require_clob_token_ids: bool = False
 
@@ -568,6 +571,14 @@ class PaperTrader:
                 traces.extend(self._stock_or_market_traces(stock, details_by_ticker.get(stock.ticker, []), rejection))
                 continue
 
+            ticker_rejection = self._ticker_loss_limit_rejection(stock.ticker, portfolio, now)
+            if ticker_rejection is not None:
+                rejections.append(ticker_rejection)
+                traces.extend(
+                    self._stock_or_market_traces(stock, details_by_ticker.get(stock.ticker, []), ticker_rejection)
+                )
+                continue
+
             markets = sorted(
                 details_by_ticker.get(stock.ticker, []),
                 key=lambda market: (-market.trade_count, -market.volume_24h, -market.liquidity),
@@ -700,6 +711,13 @@ class PaperTrader:
             evidence_quality_score=evidence_quality_score,
         )
         confidence = self._confidence(stock, market, edge, evidence_quality_score)
+        if confidence < self.config.min_confidence:
+            return None, Rejection(
+                stock.ticker,
+                market.condition_id,
+                "low_confidence",
+                f"confidence={confidence:.3f}",
+            )
         thesis = (
             f"{stock.ticker} {stock.trend or 'unknown'} flow, "
             f"buzz {stock.buzz_score:.1f}, sentiment {stock.sentiment_score:+.3f}; "
@@ -723,6 +741,34 @@ class PaperTrader:
                 counter_case=counter_case,
             ),
             None,
+        )
+
+    def _ticker_loss_limit_rejection(
+        self,
+        ticker: str,
+        portfolio: Portfolio,
+        now: datetime,
+    ) -> Optional[Rejection]:
+        if self.config.block_ticker_stop_losses <= 0:
+            return None
+
+        cutoff = now - timedelta(days=max(1, self.config.block_ticker_stop_loss_days))
+        stop_losses = 0
+        for position in portfolio.closed_positions:
+            if position.ticker != ticker or position.exit_reason != "stop_loss":
+                continue
+            closed_at = parse_isoformat(position.closed_at)
+            if closed_at is not None and closed_at >= cutoff:
+                stop_losses += 1
+
+        if stop_losses < self.config.block_ticker_stop_losses:
+            return None
+
+        return Rejection(
+            ticker,
+            None,
+            "ticker_stop_loss_block",
+            f"{stop_losses} stop-loss exit(s) in last {self.config.block_ticker_stop_loss_days}d",
         )
 
     def _reentry_limit_rejection(

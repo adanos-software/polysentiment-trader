@@ -126,6 +126,7 @@ def strategy_payload(config: StrategyConfig) -> dict[str, Any]:
         "min_liquidity": config.min_liquidity,
         "min_abs_sentiment": config.min_abs_sentiment,
         "min_edge": config.min_edge,
+        "min_confidence": config.min_confidence,
         "min_evidence_quality_score": config.min_evidence_quality_score,
         "min_price": config.min_price,
         "max_price": config.max_price,
@@ -135,6 +136,8 @@ def strategy_payload(config: StrategyConfig) -> dict[str, Any]:
         "take_profit_cooldown_minutes": config.take_profit_cooldown_minutes,
         "stop_loss_cooldown_minutes": config.stop_loss_cooldown_minutes,
         "max_stop_losses_per_day": config.max_stop_losses_per_day,
+        "block_ticker_stop_losses": config.block_ticker_stop_losses,
+        "block_ticker_stop_loss_days": config.block_ticker_stop_loss_days,
         "allow_stable_trend": config.allow_stable_trend,
         "require_clob_token_ids": config.require_clob_token_ids,
     }

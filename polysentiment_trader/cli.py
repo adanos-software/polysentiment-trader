@@ -54,6 +54,11 @@ def run_once(args: argparse.Namespace) -> None:
         max_positions=args.max_positions,
         max_stake=args.max_stake,
         min_edge=args.min_edge,
+        min_confidence=args.min_confidence,
+        min_evidence_quality_score=args.min_evidence_quality_score,
+        min_liquidity=args.min_liquidity,
+        min_market_trade_count=args.min_market_trade_count,
+        min_stock_trade_count=args.min_stock_trade_count,
         min_buzz_score=args.min_buzz_score,
         min_abs_sentiment=args.min_abs_sentiment,
         min_price=args.min_price,
@@ -63,6 +68,9 @@ def run_once(args: argparse.Namespace) -> None:
         take_profit_cooldown_minutes=args.take_profit_cooldown_minutes,
         stop_loss_cooldown_minutes=args.stop_loss_cooldown_minutes,
         max_stop_losses_per_day=args.max_stop_losses_per_day,
+        block_ticker_stop_losses=args.block_ticker_stop_losses,
+        block_ticker_stop_loss_days=args.block_ticker_stop_loss_days,
+        allow_stable_trend=not args.disable_stable_trend,
         require_clob_token_ids=args.require_clob_token_ids,
     )
     ledger_path = Path(args.ledger).expanduser()
@@ -154,6 +162,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-positions", type=int, default=5)
     parser.add_argument("--max-stake", type=float, default=25.0)
     parser.add_argument("--min-edge", type=float, default=0.04)
+    parser.add_argument("--min-confidence", type=float, default=0.0)
+    parser.add_argument("--min-evidence-quality-score", type=float, default=0.45)
+    parser.add_argument("--min-liquidity", type=float, default=1000.0)
+    parser.add_argument("--min-market-trade-count", type=int, default=1)
+    parser.add_argument("--min-stock-trade-count", type=int, default=10)
     parser.add_argument("--min-buzz-score", type=float, default=35.0)
     parser.add_argument("--min-abs-sentiment", type=float, default=0.12)
     parser.add_argument("--min-price", type=float, default=0.20)
@@ -163,6 +176,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--take-profit-cooldown-minutes", type=int, default=240)
     parser.add_argument("--stop-loss-cooldown-minutes", type=int, default=720)
     parser.add_argument("--max-stop-losses-per-day", type=int, default=2)
+    parser.add_argument("--block-ticker-stop-losses", type=int, default=0)
+    parser.add_argument("--block-ticker-stop-loss-days", type=int, default=7)
+    parser.add_argument("--disable-stable-trend", action="store_true")
     parser.add_argument(
         "--require-clob-token-ids",
         action="store_true",

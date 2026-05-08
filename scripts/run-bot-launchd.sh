@@ -32,9 +32,22 @@ cd "$PROJECT_DIR"
 env PYTHONUNBUFFERED=1 "$PROJECT_DIR/venv/bin/python" -m polysentiment_trader.cli \
   --base-url https://api.adanos.org \
   --loop \
-  --interval-minutes 5 \
+  --interval-minutes 2 \
   --scan-limit 25 \
-  --max-positions 10 \
+  --max-positions 5 \
+  --min-price 0.25 \
+  --max-price 0.60 \
+  --min-edge 0.05 \
+  --min-confidence 0.45 \
+  --min-evidence-quality-score 0.55 \
+  --min-liquidity 10000 \
+  --min-market-trade-count 10 \
+  --min-stock-trade-count 20 \
+  --stop-loss-pct -0.12 \
+  --take-profit-pct 0.30 \
+  --max-stop-losses-per-day 1 \
+  --block-ticker-stop-losses 2 \
+  --block-ticker-stop-loss-days 7 \
   --bankroll 1000 \
   --ledger "$PROJECT_DIR/data/paper-portfolio.json" \
   --actions-out "$PROJECT_DIR/data/latest-actions.json" \

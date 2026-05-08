@@ -343,6 +343,84 @@ def test_trader_blocks_ticker_side_reentry_during_stop_loss_cooldown():
     assert run.considered_markets[0].reason == "stop_loss_cooldown"
 
 
+def test_trader_blocks_ticker_after_recent_stop_loss_cluster():
+    trader = PaperTrader(
+        StrategyConfig(
+            min_edge=0.001,
+            block_ticker_stop_losses=2,
+            block_ticker_stop_loss_days=7,
+        )
+    )
+    portfolio = Portfolio(
+        initial_bankroll=100.0,
+        cash=100.0,
+        closed_positions=[
+            Position(
+                ticker="TSLA",
+                condition_id="old-tsla-1",
+                question="Will Tesla (TSLA) close above $360?",
+                side="YES",
+                shares=50.0,
+                entry_price=0.40,
+                current_price=0.30,
+                stake=20.0,
+                opened_at="2026-04-19T10:00:00",
+                closed_at="2026-04-19T12:00:00",
+                exit_reason="stop_loss",
+                realized_pnl=-5.0,
+                thesis="closed loser",
+                confidence=0.8,
+                edge=0.1,
+                status="closed",
+            ),
+            Position(
+                ticker="TSLA",
+                condition_id="old-tsla-2",
+                question="Will Tesla (TSLA) finish above $385?",
+                side="NO",
+                shares=50.0,
+                entry_price=0.40,
+                current_price=0.30,
+                stake=20.0,
+                opened_at="2026-04-20T10:00:00",
+                closed_at="2026-04-20T12:00:00",
+                exit_reason="stop_loss",
+                realized_pnl=-5.0,
+                thesis="closed loser",
+                confidence=0.8,
+                edge=0.1,
+                status="closed",
+            ),
+        ],
+    )
+
+    run = trader.run(
+        [stock(ticker="TSLA", sentiment=0.55)],
+        [detail(ticker="TSLA", markets=[market(condition_id="new-tsla-market")])],
+        portfolio,
+        now=datetime(2026, 4, 21, 12, 0, 0),
+    )
+
+    assert len(run.orders) == 0
+    assert run.rejection_counts()["ticker_stop_loss_block"] == 1
+    assert run.considered_markets[0].reason == "ticker_stop_loss_block"
+
+
+def test_trader_rejects_low_confidence_order():
+    trader = PaperTrader(StrategyConfig(min_edge=0.001, min_confidence=0.95))
+
+    run = trader.run(
+        [stock()],
+        [detail()],
+        Portfolio.new(1000.0),
+        now=datetime(2026, 4, 19, 12, 0, 0),
+    )
+
+    assert len(run.orders) == 0
+    assert run.rejection_counts()["low_confidence"] == 1
+    assert run.considered_markets[0].reason == "low_confidence"
+
+
 def test_portfolio_round_trip(tmp_path):
     path = tmp_path / "portfolio.json"
     portfolio = Portfolio.new(500.0)

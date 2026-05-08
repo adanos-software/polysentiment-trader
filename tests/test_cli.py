@@ -41,6 +41,11 @@ def args_for(tmp_path):
         max_positions=5,
         max_stake=25.0,
         min_edge=0.001,
+        min_confidence=0.0,
+        min_evidence_quality_score=0.45,
+        min_liquidity=1000.0,
+        min_market_trade_count=1,
+        min_stock_trade_count=10,
         min_buzz_score=40.0,
         min_abs_sentiment=0.12,
         min_price=0.20,
@@ -50,6 +55,9 @@ def args_for(tmp_path):
         take_profit_cooldown_minutes=240,
         stop_loss_cooldown_minutes=720,
         max_stop_losses_per_day=1,
+        block_ticker_stop_losses=0,
+        block_ticker_stop_loss_days=7,
+        disable_stable_trend=False,
         require_clob_token_ids=False,
         ledger=str(tmp_path / "paper-portfolio.json"),
         actions_out=str(tmp_path / "latest-actions.json"),
@@ -66,6 +74,11 @@ def test_build_parser_exposes_risk_controls():
     args = parser.parse_args(["--api-key", "test-key"])
 
     assert args.min_edge == pytest.approx(0.04)
+    assert args.min_confidence == pytest.approx(0.0)
+    assert args.min_evidence_quality_score == pytest.approx(0.45)
+    assert args.min_liquidity == pytest.approx(1000.0)
+    assert args.min_market_trade_count == 1
+    assert args.min_stock_trade_count == 10
     assert args.min_buzz_score == pytest.approx(35.0)
     assert args.min_abs_sentiment == pytest.approx(0.12)
     assert args.min_price == pytest.approx(0.20)
@@ -73,6 +86,9 @@ def test_build_parser_exposes_risk_controls():
     assert args.take_profit_cooldown_minutes == 240
     assert args.stop_loss_cooldown_minutes == 720
     assert args.max_stop_losses_per_day == 2
+    assert args.block_ticker_stop_losses == 0
+    assert args.block_ticker_stop_loss_days == 7
+    assert args.disable_stable_trend is False
 
 
 def test_build_parser_uses_current_working_directory_for_runtime_defaults(monkeypatch, tmp_path):
