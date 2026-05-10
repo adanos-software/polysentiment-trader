@@ -76,6 +76,7 @@ def run_once(args: argparse.Namespace) -> None:
     ledger_path = Path(args.ledger).expanduser()
     actions_path = optional_path(args.actions_out)
     markets_path = optional_path(args.markets_out)
+    history_dir = optional_path(args.history_dir)
     portfolio = load_portfolio(ledger_path, initial_bankroll=args.bankroll)
 
     trending = client.get_polymarket_trending(days=args.days, limit=args.scan_limit)
@@ -100,6 +101,7 @@ def run_once(args: argparse.Namespace) -> None:
     write_transparency_exports(
         actions_path=actions_path,
         markets_path=markets_path,
+        history_dir=history_dir,
         run=run,
         generated_at=datetime.fromisoformat(run.portfolio.updated_at),
         base_url=args.base_url,
@@ -114,6 +116,8 @@ def run_once(args: argparse.Namespace) -> None:
         print(f"Actions: {actions_path}")
     if markets_path is not None:
         print(f"Markets: {markets_path}")
+    if history_dir is not None:
+        print(f"History: {history_dir}")
 
 
 def optional_path(raw_path: str) -> Path | None:
@@ -148,6 +152,7 @@ def build_parser() -> argparse.ArgumentParser:
     default_ledger = runtime_data_path("paper-portfolio.json")
     default_actions = runtime_data_path("latest-actions.json")
     default_markets = runtime_data_path("considered-markets-latest.csv")
+    default_history = runtime_data_path("history")
     parser = argparse.ArgumentParser(
         description="Papertrade Polymarket contracts with Adanos sentiment data.",
     )
@@ -156,6 +161,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ledger", default=str(default_ledger))
     parser.add_argument("--actions-out", default=os.getenv("POLYSENTIMENT_ACTIONS_OUT", str(default_actions)))
     parser.add_argument("--markets-out", default=os.getenv("POLYSENTIMENT_MARKETS_OUT", str(default_markets)))
+    parser.add_argument("--history-dir", default=os.getenv("POLYSENTIMENT_HISTORY_DIR", str(default_history)))
     parser.add_argument("--bankroll", type=float, default=1000.0)
     parser.add_argument("--days", type=int, default=1)
     parser.add_argument("--scan-limit", type=int, default=25)

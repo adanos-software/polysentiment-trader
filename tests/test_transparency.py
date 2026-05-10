@@ -1,9 +1,15 @@
 import csv
+import gzip
 import json
 from datetime import datetime
 
 from polysentiment_trader.engine import PaperTrader, Portfolio, StrategyConfig
-from polysentiment_trader.transparency import build_actions_payload, public_base_url, write_transparency_exports
+from polysentiment_trader.transparency import (
+    append_history_export,
+    build_actions_payload,
+    public_base_url,
+    write_transparency_exports,
+)
 
 from tests.factories import detail, market, stock
 
@@ -79,6 +85,18 @@ def test_transparency_exports_write_json_and_csv(tmp_path):
     assert rows[0]["condition_id"] == "c1"
     assert "evidence_quality_score" in rows[0]
     assert "counter_case" in rows[0]
+
+
+def test_append_history_export_writes_compressed_jsonl(tmp_path):
+    path = append_history_export(
+        tmp_path,
+        {"generated_at": "2026-05-10T12:00:00", "candidate_action_counts": {"skipped": 2}},
+    )
+
+    assert path.name == "actions-20260510.jsonl.gz"
+    with gzip.open(path, "rt", encoding="utf-8") as handle:
+        rows = [json.loads(line) for line in handle]
+    assert rows == [{"candidate_action_counts": {"skipped": 2}, "generated_at": "2026-05-10T12:00:00"}]
 
 
 def test_transparency_exports_can_be_disabled(tmp_path):

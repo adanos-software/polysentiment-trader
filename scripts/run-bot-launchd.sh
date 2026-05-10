@@ -51,6 +51,7 @@ env PYTHONUNBUFFERED=1 "$PROJECT_DIR/venv/bin/python" -m polysentiment_trader.cl
   --bankroll 1000 \
   --ledger "$PROJECT_DIR/data/paper-portfolio.json" \
   --actions-out "$PROJECT_DIR/data/latest-actions.json" \
-  --markets-out "$PROJECT_DIR/data/considered-markets-latest.csv" &
+  --markets-out "$PROJECT_DIR/data/considered-markets-latest.csv" \
+  --history-dir "$PROJECT_DIR/data/history" &
 child_pid=$!
 wait "$child_pid"

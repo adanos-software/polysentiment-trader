@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import gzip
 import json
 import os
 from dataclasses import asdict
@@ -73,6 +74,7 @@ def write_transparency_exports(
     *,
     actions_path: Path | None,
     markets_path: Path | None,
+    history_dir: Path | None = None,
     run: RunResult,
     generated_at: datetime,
     base_url: str,
@@ -82,7 +84,7 @@ def write_transparency_exports(
     days: int,
     dry_run: bool,
 ) -> None:
-    if actions_path is None and markets_path is None:
+    if actions_path is None and markets_path is None and history_dir is None:
         return
 
     payload = build_actions_payload(
@@ -100,6 +102,19 @@ def write_transparency_exports(
     if markets_path is not None:
         rows = [csv_trace_payload(trace) for trace in run.considered_markets]
         atomic_write_csv(markets_path, rows, market_trace_fieldnames())
+    if history_dir is not None:
+        append_history_export(history_dir, payload)
+
+
+def append_history_export(history_dir: Path, payload: dict[str, Any]) -> Path:
+    history_dir.mkdir(parents=True, exist_ok=True)
+    generated_at = str(payload.get("generated_at") or "unknown")
+    day = generated_at[:10].replace("-", "") if len(generated_at) >= 10 else "unknown"
+    path = history_dir / f"actions-{day}.jsonl.gz"
+    with gzip.open(path, "at", encoding="utf-8") as handle:
+        json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
+        handle.write("\n")
+    return path
 
 
 def public_base_url(base_url: str) -> str:

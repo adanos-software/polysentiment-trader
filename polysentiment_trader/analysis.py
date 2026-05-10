@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import argparse
 import csv
+import gzip
 import json
 import math
 import re
 from collections import Counter
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -16,6 +18,7 @@ DEFAULT_ACTIONS_PATH = Path("data/latest-actions.json")
 DEFAULT_MARKETS_PATH = Path("data/considered-markets-latest.csv")
 DEFAULT_PORTFOLIO_PATH = Path("data/paper-portfolio.json")
 DEFAULT_LOGPATH_FILE = Path("data/polysentiment-trader.logpath")
+DEFAULT_HISTORY_DIR = Path("data/history")
 
 SECRET_PATTERNS = (
     re.compile(r"(?i)(bearer)\s+[A-Za-z0-9._~+/=-]+"),
@@ -40,6 +43,50 @@ def load_json(path: Path) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def parse_generated_at(payload: dict[str, Any]) -> datetime | None:
+    value = payload.get("generated_at")
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+def utc_now_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def load_history_records(
+    history_dir: Path | None,
+    *,
+    hours: float,
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    if history_dir is None or hours <= 0 or not history_dir.exists():
+        return []
+    cutoff = (now or utc_now_naive()) - timedelta(hours=hours)
+    records: list[dict[str, Any]] = []
+    for path in sorted(history_dir.glob("actions-*.jsonl*")):
+        opener = gzip.open if path.suffix == ".gz" else open
+        with opener(path, "rt", encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(payload, dict):
+                    continue
+                generated_at = parse_generated_at(payload)
+                if generated_at is None or generated_at < cutoff:
+                    continue
+                records.append(payload)
+    return sorted(records, key=lambda payload: parse_generated_at(payload) or datetime.min)
+
+
 def load_markets(path: Path, actions_payload: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     if path.exists():
         with path.open(encoding="utf-8", newline="") as handle:
@@ -50,11 +97,33 @@ def load_markets(path: Path, actions_payload: dict[str, Any] | None = None) -> l
     return [dict(row) for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
 
 
+def history_market_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for record in records:
+        generated_at = record.get("generated_at")
+        for row in record.get("considered_markets") or []:
+            if not isinstance(row, dict):
+                continue
+            payload = dict(row)
+            payload["generated_at"] = generated_at
+            rows.append(payload)
+    return rows
+
+
 def load_log_path(logpath_file: Path) -> Path | None:
     if not logpath_file.exists():
         return None
     value = logpath_file.read_text(encoding="utf-8").strip()
     return Path(value).expanduser() if value else None
+
+
+def optional_path(raw_path: str | Path | None) -> Path | None:
+    if raw_path is None:
+        return None
+    value = str(raw_path).strip()
+    if value.lower() in {"", "none", "off", "false", "0"}:
+        return None
+    return Path(value).expanduser()
 
 
 def read_log_tail(log_path: Path | None, max_lines: int = 120, max_bytes: int = 128_000) -> list[str]:
@@ -168,6 +237,21 @@ def count_values(rows: Iterable[dict[str, Any]], key: str) -> Counter[str]:
         value = str(row.get(key) or "").strip() or "unknown"
         counts[value] += 1
     return counts
+
+
+def combine_counts(records: list[dict[str, Any]], key: str) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    for record in records:
+        values = record.get(key)
+        if not isinstance(values, dict):
+            continue
+        for name, count in values.items():
+            counts[str(name)] += int(count or 0)
+    return counts
+
+
+def counts_text(counts: Counter[str]) -> str:
+    return ", ".join(f"{key}={value}" for key, value in counts.most_common()) or "none"
 
 
 def pressure_line(label: str, failed: int, total: int, threshold: Any, near: int = 0) -> str:
@@ -309,6 +393,39 @@ def summarize_closed_positions(closed_positions: list[dict[str, Any]], strategy:
     return lines
 
 
+def history_window_summary(records: list[dict[str, Any]], hours: float) -> list[str]:
+    if not records:
+        return [f"- No history records found for the last {hours:g}h."]
+
+    first = records[0]
+    last = records[-1]
+    first_time = first.get("generated_at") or "n/a"
+    last_time = last.get("generated_at") or "n/a"
+    first_portfolio = first.get("portfolio") if isinstance(first.get("portfolio"), dict) else {}
+    last_portfolio = last.get("portfolio") if isinstance(last.get("portfolio"), dict) else {}
+    first_equity = as_float(first_portfolio.get("equity"))
+    last_equity = as_float(last_portfolio.get("equity"))
+    first_realized = as_float(first_portfolio.get("realized_pnl"))
+    last_realized = as_float(last_portfolio.get("realized_pnl"))
+    equity_delta = None if first_equity is None or last_equity is None else last_equity - first_equity
+    realized_delta = None if first_realized is None or last_realized is None else last_realized - first_realized
+
+    cycle_entries = sum(len(record.get("actions") or []) for record in records)
+    cycle_exits = sum(len(record.get("exits") or []) for record in records)
+    action_counts = combine_counts(records, "candidate_action_counts")
+    reason_counts = combine_counts(records, "candidate_reason_counts")
+
+    return [
+        f"- Records: {len(records)} over requested {hours:g}h",
+        f"- First/last: {first_time} -> {last_time}",
+        f"- New entries/exits in window: {cycle_entries}/{cycle_exits}",
+        f"- Equity delta: {fmt_money(equity_delta)}",
+        f"- Realized PnL delta: {fmt_money(realized_delta)}",
+        f"- Window actions: {counts_text(action_counts)}",
+        f"- Window skip reasons: {counts_text(reason_counts)}",
+    ]
+
+
 def summarize_log_tail(lines: list[str]) -> list[str]:
     if not lines:
         return ["- No log tail available."]
@@ -357,6 +474,8 @@ def render_analysis(
     log_lines: list[str],
     *,
     near_miss_limit: int = 10,
+    history_records: list[dict[str, Any]] | None = None,
+    history_hours: float = 12.0,
 ) -> str:
     strategy = actions_payload.get("strategy") if isinstance(actions_payload.get("strategy"), dict) else {}
     portfolio = portfolio_summary(portfolio_payload, actions_payload)
@@ -395,6 +514,14 @@ def render_analysis(
     lines.extend(["", "Threshold Pressure"])
     lines.extend(threshold_pressure(market_rows, strategy))
 
+    records = history_records or []
+    history_rows = history_market_rows(records)
+    lines.extend(["", "History Window"])
+    lines.extend(history_window_summary(records, history_hours))
+    if history_rows:
+        lines.extend(["", "History Threshold Pressure"])
+        lines.extend(threshold_pressure(history_rows, strategy))
+
     lines.extend(["", "Near Misses"])
     misses = near_misses(market_rows, near_miss_limit)
     if not misses:
@@ -413,6 +540,20 @@ def render_analysis(
             f"question={row.get('question') or 'n/a'}"
         )
 
+    if history_rows:
+        lines.extend(["", "History Near Misses"])
+        for row in near_misses(history_rows, near_miss_limit):
+            lines.append(
+                "- "
+                f"{row.get('generated_at', 'n/a')} "
+                f"{row.get('ticker', 'n/a')} {row.get('side', 'n/a')} "
+                f"reason={row.get('reason', 'unknown')} "
+                f"quote={fmt_number(selected_quote(row))} "
+                f"evidence={fmt_number(row.get('evidence_quality_score'))} "
+                f"liq={fmt_number(row.get('liquidity'), 0)} "
+                f"question={row.get('question') or 'n/a'}"
+            )
+
     lines.extend(["", "Log Tail"])
     lines.extend(summarize_log_tail(log_lines))
 
@@ -428,6 +569,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--markets", type=Path, default=DEFAULT_MARKETS_PATH)
     parser.add_argument("--portfolio", type=Path, default=DEFAULT_PORTFOLIO_PATH)
     parser.add_argument("--logpath-file", type=Path, default=DEFAULT_LOGPATH_FILE)
+    parser.add_argument("--history-dir", type=optional_path, default=DEFAULT_HISTORY_DIR)
+    parser.add_argument("--hours", type=float, default=12.0)
     parser.add_argument("--log", type=Path, default=None)
     parser.add_argument("--near-misses", type=int, default=10)
     return parser
@@ -438,6 +581,7 @@ def main(argv: list[str] | None = None) -> int:
     actions_payload = load_json(args.actions)
     portfolio_payload = load_json(args.portfolio)
     market_rows = load_markets(args.markets, actions_payload)
+    history_records = load_history_records(args.history_dir, hours=args.hours)
     log_path = args.log or load_log_path(args.logpath_file)
     log_lines = read_log_tail(log_path)
     print(
@@ -447,6 +591,8 @@ def main(argv: list[str] | None = None) -> int:
             portfolio_payload,
             log_lines,
             near_miss_limit=max(0, args.near_misses),
+            history_records=history_records,
+            history_hours=args.hours,
         ),
         end="",
     )

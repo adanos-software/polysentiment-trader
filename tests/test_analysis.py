@@ -1,7 +1,11 @@
 import csv
+import gzip
+import json
+from datetime import datetime
 
 from polysentiment_trader.analysis import (
     load_markets,
+    load_history_records,
     read_log_tail,
     render_analysis,
     sanitize_line,
@@ -97,7 +101,15 @@ def test_render_analysis_shows_filter_pressure_and_near_misses():
         },
     ]
 
-    report = render_analysis(actions, rows, {}, ["cycle complete; skipped=2"], near_miss_limit=2)
+    report = render_analysis(
+        actions,
+        rows,
+        {},
+        ["cycle complete; skipped=2"],
+        near_miss_limit=2,
+        history_records=[{**actions, "generated_at": "2026-05-10T12:00:00", "considered_markets": rows}],
+        history_hours=12,
+    )
 
     assert "PolySentimentTrader Performance Replay" in report
     assert "Cash: $981.13" in report
@@ -105,6 +117,8 @@ def test_render_analysis_shows_filter_pressure_and_near_misses():
     assert "weak_sentiment=1" in report
     assert "Threshold Pressure" in report
     assert "Strategy-threshold rows: 2/3" in report
+    assert "History Window" in report
+    assert "Window skip reasons" in report
     assert "TSLA YES reason=weak_sentiment" in report
     assert "Recent stop-losses" in report
 
@@ -123,6 +137,22 @@ def test_load_markets_reads_csv(tmp_path):
         writer.writerow({"ticker": "AAPL", "action": "opened"})
 
     assert load_markets(path, {}) == [{"ticker": "AAPL", "action": "opened"}]
+
+
+def test_load_history_records_filters_by_window(tmp_path):
+    path = tmp_path / "actions-20260510.jsonl.gz"
+    rows = [
+        {"generated_at": "2026-05-10T00:00:00", "candidate_action_counts": {"skipped": 1}},
+        {"generated_at": "2026-05-10T11:00:00", "candidate_action_counts": {"skipped": 2}},
+    ]
+    with gzip.open(path, "wt", encoding="utf-8") as handle:
+        for row in rows:
+            json.dump(row, handle)
+            handle.write("\n")
+
+    records = load_history_records(tmp_path, hours=2, now=datetime(2026, 5, 10, 12, 0, 0))
+
+    assert records == [rows[1]]
 
 
 def test_sanitize_line_redacts_common_secret_shapes():

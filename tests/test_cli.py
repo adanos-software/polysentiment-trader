@@ -62,6 +62,7 @@ def args_for(tmp_path):
         ledger=str(tmp_path / "paper-portfolio.json"),
         actions_out=str(tmp_path / "latest-actions.json"),
         markets_out=str(tmp_path / "considered.csv"),
+        history_dir=str(tmp_path / "history"),
         days=1,
         scan_limit=25,
         no_write=False,
@@ -105,6 +106,7 @@ def test_build_parser_uses_current_working_directory_for_runtime_defaults(monkey
     assert args.ledger == str(tmp_path / "data" / "paper-portfolio.json")
     assert args.actions_out == str(tmp_path / "data" / "latest-actions.json")
     assert args.markets_out == str(tmp_path / "data" / "considered-markets-latest.csv")
+    assert args.history_dir == str(tmp_path / "data" / "history")
 
 
 def test_run_once_saves_ledger_before_transparency_export_failure(monkeypatch, tmp_path):
@@ -131,6 +133,7 @@ def test_run_once_skips_stock_detail_api_failures(monkeypatch, tmp_path, capsys)
     assert "AAPL: Timed out reading" in captured.out
     assert (tmp_path / "paper-portfolio.json").exists()
     assert (tmp_path / "latest-actions.json").exists()
+    assert list((tmp_path / "history").glob("actions-*.jsonl.gz"))
 
 
 def test_loop_logs_failure_and_continues_to_next_cycle(tmp_path, capsys):

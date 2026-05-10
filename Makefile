@@ -4,6 +4,7 @@ BIN := $(VENV)/bin
 TRADER := $(BIN)/python -m polysentiment_trader.cli
 ANALYZE := $(BIN)/python -m polysentiment_trader.analysis
 LEDGER ?= data/paper-portfolio.json
+ANALYZE_HOURS ?= 12
 INTERVAL ?= 60
 CYCLES ?= 3
 SCAN_LIMIT ?= 25
@@ -58,7 +59,7 @@ portfolio:
 	fi
 
 analyze:
-	$(ANALYZE)
+	$(ANALYZE) --hours $(ANALYZE_HOURS)
 
 clean:
 	rm -rf .pytest_cache polysentiment_trader.egg-info

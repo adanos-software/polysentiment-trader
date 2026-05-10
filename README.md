@@ -180,10 +180,18 @@ Use the read-only analyzer to turn the latest transparency files, paper ledger, 
 ```bash
 make analyze
 # or
-polysentiment-trader-analyze --near-misses 15
+polysentiment-trader-analyze --hours 12 --near-misses 15
 ```
 
-The report shows portfolio PnL, closed-trade diagnostics, candidate funnel counts, threshold pressure, and top near misses. Use this before changing thresholds so risk knobs are tuned from observed filter pressure rather than guesswork.
+The report shows portfolio PnL, closed-trade diagnostics, candidate funnel counts, threshold pressure, and top near misses. It also reads the append-only history in `data/history` and aggregates the requested time window, so `--hours 12` shows the last 12 hours once the bot has been collecting snapshots. Use this before changing thresholds so risk knobs are tuned from observed filter pressure rather than guesswork.
+
+For unattended local reporting, schedule a one-shot report writer:
+
+```bash
+scripts/schedule-performance-report.sh 12
+```
+
+It writes `performance-report-latest.txt` under `~/Library/Application Support/PolySentimentTrader/reports`.
 
 ## Data Quality
 

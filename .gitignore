@@ -10,6 +10,7 @@ data/*.json
 data/*.csv
 data/*.pid
 data/*.logpath
+data/
 dist/
 htmlcov/
 logs/

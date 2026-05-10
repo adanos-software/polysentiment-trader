@@ -25,8 +25,9 @@ LOG_FILE="\$LOG_DIR/polysentiment-trader-launchd.log"
 LEDGER_FILE="\$RUNTIME_DIR/paper-portfolio.json"
 ACTIONS_FILE="\$RUNTIME_DIR/latest-actions.json"
 MARKETS_FILE="\$RUNTIME_DIR/considered-markets-latest.csv"
+HISTORY_DIR="\$RUNTIME_DIR/history"
 
-mkdir -p "\$RUNTIME_DIR" "\$LOG_DIR"
+mkdir -p "\$RUNTIME_DIR" "\$LOG_DIR" "\$HISTORY_DIR"
 
 printf '%s\n' "\$\$" > "\$PID_FILE"
 printf '%s\n' "launchagent" > "\$TIMER_FILE"
@@ -64,12 +65,14 @@ exec env PYTHONUNBUFFERED=1 "\$PROJECT_DIR/venv/bin/python" -m polysentiment_tra
   --bankroll 1000 \\
   --ledger "\$LEDGER_FILE" \\
   --actions-out "\$ACTIONS_FILE" \\
-  --markets-out "\$MARKETS_FILE"
+  --markets-out "\$MARKETS_FILE" \\
+  --history-dir "\$HISTORY_DIR"
 EOF
 
 chmod 755 "$WRAPPER"
 
 mkdir -p "$PROJECT_DIR/data"
+mkdir -p "$RUNTIME_DIR/history"
 for name in \
   paper-portfolio.json \
   latest-actions.json \
@@ -90,6 +93,15 @@ do
   fi
   ln -s "$dst" "$src"
 done
+
+history_src="$PROJECT_DIR/data/history"
+history_dst="$RUNTIME_DIR/history"
+if [ -L "$history_src" ]; then
+  rm "$history_src"
+elif [ -d "$history_src" ] && [ ! -L "$history_src" ]; then
+  mv "$history_src" "$PROJECT_DIR/data/history.pre-launchagent-$(date +%Y%m%d-%H%M%S)"
+fi
+ln -s "$history_dst" "$history_src"
 
 cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
