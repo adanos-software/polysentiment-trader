@@ -128,6 +128,7 @@ make run        # one papertrade cycle
 make test-run   # three one-minute cycles
 make loop       # hourly loop
 make portfolio  # pretty-print the JSON ledger
+make analyze    # replay latest snapshots and explain filter pressure
 make test       # unit tests
 ```
 
@@ -171,6 +172,18 @@ For every passed entry candidate, the exports now include:
 - `decision_explainer`: a cycle summary of what the bot did and why
 
 In the JSON, `skipped_counts` counts strategy decisions, while `candidate_reason_counts` counts rows in the detailed trace.
+
+## Performance Replay
+
+Use the read-only analyzer to turn the latest transparency files, paper ledger, and sanitized log tail into a practical optimization report:
+
+```bash
+make analyze
+# or
+polysentiment-trader-analyze --near-misses 15
+```
+
+The report shows portfolio PnL, closed-trade diagnostics, candidate funnel counts, threshold pressure, and top near misses. Use this before changing thresholds so risk knobs are tuned from observed filter pressure rather than guesswork.
 
 ## Data Quality
 

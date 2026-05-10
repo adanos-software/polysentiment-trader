@@ -22,6 +22,7 @@ dev = ["pytest>=8.0.0"]
 
 [project.scripts]
 polysentiment-trader = "polysentiment_trader.cli:main"
+polysentiment-trader-analyze = "polysentiment_trader.analysis:main"
 
 [tool.setuptools.packages.find]
 include = ["polysentiment_trader", "polysentiment_trader.*"]
